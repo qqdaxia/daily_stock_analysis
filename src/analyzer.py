@@ -1417,7 +1417,7 @@ class GeminiAnalyzer:
 | 筹码状态 | {chip.get('chip_status', unknown_text)} | |
 """
         
-        # 添加趋势分析结果（默认 bull_trend 保持旧口径，显式技能切换到技能中立口径）
+        # 添加趋势分析结果（仅隐式内建 bull_trend 默认回退保留旧口径）
         if 'trend_analysis' in context:
             trend = context['trend_analysis']
             if use_legacy_default_prompt:

@@ -57,6 +57,76 @@ class SkillPromptState:
     technical_skill_policy: str
 
 
+def _normalize_skill_ids(
+    skill_ids: Optional[List[str]],
+    *,
+    available_skill_ids: set[str],
+) -> tuple[List[str], List[str]]:
+    """Return validated skill ids plus unknown ids, preserving input order."""
+    normalized: List[str] = []
+    unknown: List[str] = []
+
+    for skill_id in skill_ids or []:
+        if not isinstance(skill_id, str):
+            continue
+        cleaned = skill_id.strip()
+        if not cleaned:
+            continue
+        if cleaned == "all":
+            if "all" not in normalized:
+                normalized.append("all")
+            continue
+        if cleaned in available_skill_ids:
+            if cleaned not in normalized:
+                normalized.append(cleaned)
+            continue
+        if cleaned not in unknown:
+            unknown.append(cleaned)
+
+    return normalized, unknown
+
+
+def _resolve_selected_skill_ids(
+    *,
+    requested_skills: Optional[List[str]],
+    configured_skills: Optional[List[str]],
+    default_skills: List[str],
+    available_skill_ids: set[str],
+) -> tuple[List[str], bool]:
+    """Resolve active skill ids and whether they came from a valid explicit selection."""
+    selection_source = None
+    raw_skill_ids = None
+    if requested_skills is not None:
+        selection_source = "request"
+        raw_skill_ids = requested_skills
+    elif configured_skills is not None:
+        selection_source = "config"
+        raw_skill_ids = configured_skills
+    else:
+        return list(default_skills), False
+
+    selected_skill_ids, unknown_skill_ids = _normalize_skill_ids(
+        raw_skill_ids,
+        available_skill_ids=available_skill_ids,
+    )
+    if unknown_skill_ids:
+        logger.warning(
+            "[AgentFactory] Ignoring unknown %s skill ids: %s",
+            selection_source,
+            unknown_skill_ids,
+        )
+    if selected_skill_ids:
+        return selected_skill_ids, True
+
+    if raw_skill_ids:
+        logger.warning(
+            "[AgentFactory] No valid %s skills remain after validation; falling back to default skills: %s",
+            selection_source,
+            default_skills,
+        )
+    return list(default_skills), False
+
+
 def get_tool_registry():
     """Return a cached ToolRegistry (built once, shared across requests)."""
     global _TOOL_REGISTRY
@@ -134,19 +204,29 @@ def resolve_skill_prompt_state(config=None, skills: Optional[List[str]] = None) 
     )
 
     skill_manager = get_skill_manager(config)
-    configured_skills = getattr(config, "agent_skills", None) or None
-    explicit_skill_selection = bool(skills) or configured_skills is not None
-    default_skills = get_default_active_skill_ids(skill_manager.list_skills())
-
-    if skills is not None:
-        skills_to_activate = skills or default_skills
-    else:
-        skills_to_activate = configured_skills or default_skills
+    skill_catalog = list(skill_manager.list_skills())
+    available_skill_ids = {
+        str(getattr(skill, "name", "")).strip()
+        for skill in skill_catalog
+        if str(getattr(skill, "name", "")).strip()
+    }
+    configured_skills = getattr(config, "agent_skills", None)
+    if configured_skills == []:
+        configured_skills = None
+    default_skills = get_default_active_skill_ids(
+        skill_catalog,
+        available_skill_ids=available_skill_ids or None,
+    )
+    skills_to_activate, explicit_skill_selection = _resolve_selected_skill_ids(
+        requested_skills=skills,
+        configured_skills=configured_skills,
+        default_skills=default_skills,
+        available_skill_ids=available_skill_ids,
+    )
 
     use_legacy_default_prompt = (
-        bool(default_skills)
-        and len(skills_to_activate) == len(default_skills)
-        and skills_to_activate == default_skills
+        not explicit_skill_selection
+        and skills_to_activate == ["bull_trend"]
     )
 
     skill_manager.activate(skills_to_activate)
