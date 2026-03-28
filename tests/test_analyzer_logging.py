@@ -94,11 +94,15 @@ def test_should_log_llm_content_preview_honors_explicit_process_preview_flag():
     assert _should_log_llm_content_preview(_make_config())
 
 
-def test_setup_logging_only_enables_sensitive_preview_for_explicit_debug_levels(tmp_path):
+def test_setup_logging_only_enables_sensitive_preview_for_explicit_process_debug_flag(tmp_path):
     setup_logging(log_dir=str(tmp_path / "notset"), console_level=logging.NOTSET)
     assert not is_sensitive_log_preview_enabled()
 
-    setup_logging(log_dir=str(tmp_path / "debug"), console_level=logging.DEBUG)
+    setup_logging(log_dir=str(tmp_path / "console-debug"), console_level=logging.DEBUG)
+    assert not is_sensitive_log_preview_enabled()
+    assert not _should_log_llm_content_preview(_make_config())
+
+    setup_logging(log_dir=str(tmp_path / "debug"), debug=True)
     assert is_sensitive_log_preview_enabled()
 
 

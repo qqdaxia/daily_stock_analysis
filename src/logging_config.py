@@ -24,13 +24,13 @@ _sensitive_log_preview_enabled = False
 
 
 def set_sensitive_log_preview_enabled(enabled: bool) -> None:
-    """Persist whether sensitive LLM previews are allowed for this process."""
+    """Persist an explicit per-process override for sensitive LLM previews."""
     global _sensitive_log_preview_enabled
     _sensitive_log_preview_enabled = bool(enabled)
 
 
 def is_sensitive_log_preview_enabled() -> bool:
-    """Return whether sensitive LLM previews are explicitly enabled."""
+    """Return whether an explicit per-process preview override is enabled."""
     return _sensitive_log_preview_enabled
 
 
@@ -88,7 +88,8 @@ def setup_logging(
         level = console_level
     else:
         level = logging.DEBUG if debug else logging.INFO
-    set_sensitive_log_preview_enabled(debug or level == logging.DEBUG)
+    # Only an explicit process-level debug override should bypass runtime config checks.
+    set_sensitive_log_preview_enabled(debug)
 
     # 创建日志目录
     log_path = Path(log_dir)
