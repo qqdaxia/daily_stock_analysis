@@ -275,8 +275,10 @@ def test_sanitize_llm_log_preview_redacts_entire_unquoted_assignment_values_with
     [
         ("password=abc$123", "password=[REDACTED]"),
         ("password=abc&123", "password=[REDACTED]"),
+        ("password=abc|123", "password=[REDACTED]"),
         ("password=abc,123", "password=[REDACTED]"),
         ("password=abc;123", "password=[REDACTED]"),
+        ("password=秘密123", "password=[REDACTED]"),
         (
             "password=abc$123 session_id=abc&123",
             "password=[REDACTED] session_id=[REDACTED]",
@@ -291,8 +293,10 @@ def test_sanitize_llm_log_preview_redacts_entire_unquoted_assignment_values_with
     assert preview == expected_preview
     assert "abc$123" not in preview
     assert "abc&123" not in preview
+    assert "abc|123" not in preview
     assert "abc,123" not in preview
     assert "abc;123" not in preview
+    assert "秘密123" not in preview
 
 
 def test_analyze_logs_actual_model_used_in_response_metadata(caplog, monkeypatch):
