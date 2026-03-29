@@ -9,7 +9,7 @@ import json
 import re
 import time
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import requests
 
@@ -295,6 +295,7 @@ class SystemConfigService:
                 models_url,
                 headers=request_headers,
                 timeout=max(5.0, float(timeout_seconds)),
+                allow_redirects=False,
             )
             latency_ms = int((time.perf_counter() - started_at) * 1000)
         except requests.RequestException as exc:
@@ -306,6 +307,16 @@ class SystemConfigService:
                 "resolved_protocol": resolved_protocol or None,
                 "models": [],
                 "latency_ms": None,
+            }
+
+        if 300 <= response.status_code < 400:
+            return {
+                "success": False,
+                "message": "Model discovery request was redirected",
+                "error": "Redirect responses are not allowed for model discovery",
+                "resolved_protocol": resolved_protocol or None,
+                "models": [],
+                "latency_ms": latency_ms,
             }
 
         if not response.ok:
@@ -921,14 +932,17 @@ class SystemConfigService:
     @staticmethod
     def _build_llm_models_url(base_url: str) -> str:
         """Convert a channel base URL into a `/models` endpoint."""
-        normalized = base_url.strip().rstrip("/")
+        parsed = urlparse(base_url.strip())
+        normalized = (parsed.path or "").rstrip("/")
         for suffix in ("/chat/completions", "/completions"):
             if normalized.endswith(suffix):
                 normalized = normalized[: -len(suffix)]
                 break
         if normalized.endswith("/models"):
-            return normalized
-        return f"{normalized}/models"
+            models_path = normalized or "/models"
+        else:
+            models_path = f"{normalized}/models" if normalized else "/models"
+        return urlunparse(parsed._replace(path=models_path, params="", query="", fragment=""))
 
     @staticmethod
     def _extract_llm_discovery_error(response: requests.Response) -> str:
@@ -1441,6 +1455,7 @@ class SystemConfigService:
             protocol_value=protocol_value,
             base_url_value=base_url_value,
             api_key_value=api_key_value,
+            model_values=model_values,
             field_prefix=field_prefix,
             require_base_url=False,
         )
@@ -1483,6 +1498,7 @@ class SystemConfigService:
         protocol_value: str,
         base_url_value: str,
         api_key_value: str,
+        model_values: Sequence[str] = (),
         field_prefix: str,
         require_base_url: bool,
     ) -> Tuple[List[Dict[str, Any]], str]:
@@ -1548,6 +1564,7 @@ class SystemConfigService:
         resolved_protocol = resolve_llm_channel_protocol(
             protocol_value,
             base_url=base_url_value,
+            models=list(model_values) if model_values else None,
             channel_name=channel_name,
         )
         # Validate parsed key segments so that inputs like "," or " , " are
