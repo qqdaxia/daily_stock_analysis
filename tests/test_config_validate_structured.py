@@ -144,6 +144,20 @@ class TestValidateStructuredStockList:
         issues = cfg.validate_structured()
         assert not any(i.field == "STOCK_GROUP_N" for i in issues)
 
+    def test_stock_email_groups_warning_normalizes_and_deduplicates_codes(self):
+        cfg = _make_config(
+            stock_list=["600519"],
+            stock_email_groups=[
+                (["  aapl ", "AAPL", "aapl", " "], ["group@example.com"]),
+            ],
+        )
+        issues = cfg.validate_structured()
+        warning = next(i for i in issues if i.field == "STOCK_GROUP_N")
+        assert warning.severity == "warning"
+        assert "AAPL" in warning.message
+        assert "  aapl " not in warning.message
+        assert warning.message.count("AAPL") == 1
+
 
 # ---------------------------------------------------------------------------
 # validate_structured() — LLM availability (three-tier check)

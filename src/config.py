@@ -1856,15 +1856,18 @@ class Config:
                 for code in self.stock_list
                 if (code or "").strip()
             }
-            missing_group_stocks = list(
-                dict.fromkeys(
-                    stock
-                    for stocks, _emails in self.stock_email_groups
-                    for stock in stocks
-                    if (stock or "").strip()
-                    and stock.strip().upper() not in configured_stock_set
-                )
-            )
+            missing_group_stocks_dict: Dict[str, None] = {}
+            for stocks, _emails in self.stock_email_groups:
+                for stock in stocks:
+                    normalized_stock = (stock or "").strip().upper()
+                    if not normalized_stock:
+                        continue
+                    if normalized_stock in configured_stock_set:
+                        continue
+                    if normalized_stock in missing_group_stocks_dict:
+                        continue
+                    missing_group_stocks_dict[normalized_stock] = None
+            missing_group_stocks = list(missing_group_stocks_dict.keys())
             if missing_group_stocks:
                 issues.append(ConfigIssue(
                     severity="warning",
