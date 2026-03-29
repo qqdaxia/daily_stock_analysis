@@ -1,15 +1,32 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LLMChannelEditor } from '../LLMChannelEditor';
+
+const {
+  update,
+  testLLMChannel,
+  discoverLLMChannelModels,
+} = vi.hoisted(() => ({
+  update: vi.fn(),
+  testLLMChannel: vi.fn(),
+  discoverLLMChannelModels: vi.fn(),
+}));
 
 vi.mock('../../../api/systemConfig', () => ({
   systemConfigApi: {
-    update: vi.fn(),
-    testLLMChannel: vi.fn(),
+    update: (...args: unknown[]) => update(...args),
+    testLLMChannel: (...args: unknown[]) => testLLMChannel(...args),
+    discoverLLMChannelModels: (...args: unknown[]) => discoverLLMChannelModels(...args),
   },
 }));
 
 describe('LLMChannelEditor', () => {
+  beforeEach(() => {
+    update.mockReset();
+    testLLMChannel.mockReset();
+    discoverLLMChannelModels.mockReset();
+  });
+
   it('renders API Key input with controlled visibility', async () => {
     render(
       <LLMChannelEditor
@@ -84,5 +101,100 @@ describe('LLMChannelEditor', () => {
     expect(within(primaryModelSelect).getByRole('option', { name: 'minimax/MiniMax-M1' })).toBeInTheDocument();
     expect(within(agentModelSelect).getByRole('option', { name: 'minimax/MiniMax-M1' })).toBeInTheDocument();
     expect(within(visionModelSelect).getByRole('option', { name: 'minimax/MiniMax-M1' })).toBeInTheDocument();
+  });
+
+  it('discovers models and writes selected values back to channel config', async () => {
+    discoverLLMChannelModels.mockResolvedValue({
+      success: true,
+      message: 'LLM channel model discovery succeeded',
+      error: null,
+      resolvedProtocol: 'openai',
+      models: ['qwen-plus', 'qwen-turbo'],
+      latencyMs: 88,
+    });
+    update.mockResolvedValue({
+      success: true,
+      configVersion: 'v2',
+      appliedCount: 1,
+      skippedMaskedCount: 0,
+      reloadTriggered: true,
+      updatedKeys: ['LLM_DASHSCOPE_MODELS'],
+      warnings: [],
+    });
+
+    render(
+      <LLMChannelEditor
+        items={[
+          { key: 'LLM_CHANNELS', value: 'dashscope' },
+          { key: 'LLM_DASHSCOPE_PROTOCOL', value: 'openai' },
+          { key: 'LLM_DASHSCOPE_BASE_URL', value: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+          { key: 'LLM_DASHSCOPE_ENABLED', value: 'true' },
+          { key: 'LLM_DASHSCOPE_API_KEY', value: 'sk-test' },
+          { key: 'LLM_DASHSCOPE_MODELS', value: '' },
+        ]}
+        configVersion="v1"
+        maskToken="******"
+        onSaved={() => {}}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Dashscope/i }));
+    fireEvent.click(screen.getByRole('button', { name: '获取模型' }));
+
+    const qwenPlusCheckbox = await screen.findByLabelText('qwen-plus');
+    fireEvent.click(qwenPlusCheckbox);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('手动模型（逗号分隔）')).toHaveValue('qwen-plus');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '保存 AI 配置' }));
+
+    await waitFor(() => {
+      expect(update).toHaveBeenCalled();
+    });
+
+    const updatePayload = update.mock.calls[0][0];
+    expect(updatePayload.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'LLM_DASHSCOPE_MODELS', value: 'qwen-plus' }),
+      ]),
+    );
+  });
+
+  it('keeps manual model input available when discovery fails', async () => {
+    discoverLLMChannelModels.mockResolvedValue({
+      success: false,
+      message: 'Model discovery is not supported for this protocol',
+      error: 'LLM channel does not support /models discovery yet',
+      resolvedProtocol: 'gemini',
+      models: [],
+      latencyMs: null,
+    });
+
+    render(
+      <LLMChannelEditor
+        items={[
+          { key: 'LLM_CHANNELS', value: 'gemini' },
+          { key: 'LLM_GEMINI_PROTOCOL', value: 'gemini' },
+          { key: 'LLM_GEMINI_BASE_URL', value: '' },
+          { key: 'LLM_GEMINI_ENABLED', value: 'true' },
+          { key: 'LLM_GEMINI_API_KEY', value: 'sk-test' },
+          { key: 'LLM_GEMINI_MODELS', value: '' },
+        ]}
+        configVersion="v1"
+        maskToken="******"
+        onSaved={() => {}}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Gemini 官方/i }));
+    fireEvent.click(screen.getByRole('button', { name: '获取模型' }));
+
+    await screen.findByText('LLM channel does not support /models discovery yet');
+
+    const manualInput = screen.getByLabelText('模型（逗号分隔）');
+    fireEvent.change(manualInput, { target: { value: 'gemini-2.5-flash' } });
+    expect(manualInput).toHaveValue('gemini-2.5-flash');
   });
 });

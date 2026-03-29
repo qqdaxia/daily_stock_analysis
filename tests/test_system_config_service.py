@@ -5,7 +5,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from tests.litellm_stub import ensure_litellm_stub
 
@@ -468,6 +468,7 @@ class SystemConfigServiceTestCase(unittest.TestCase):
             items["AGENT_ORCHESTRATOR_MODE"]["schema"]["validation"]["enum"],
             ["quick", "standard", "full", "specialist", "strategy", "skill"],
         )
+
     @patch.object(
         Config,
         "_parse_litellm_yaml",
@@ -582,6 +583,64 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertEqual(payload["resolved_protocol"], "openai")
         self.assertEqual(payload["resolved_model"], "openai/deepseek-chat")
 
+    @patch("src.services.system_config_service.requests.get")
+    def test_discover_llm_channel_models_returns_deduped_ids(self, mock_get) -> None:
+        mock_response = Mock()
+        mock_response.ok = True
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "data": [
+                {"id": "qwen-plus"},
+                {"id": "qwen-plus"},
+                {"id": "qwen-turbo"},
+            ]
+        }
+        mock_get.return_value = mock_response
+
+        payload = self.service.discover_llm_channel_models(
+            name="dashscope",
+            protocol="openai",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            api_key="sk-test-value",
+        )
+
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["resolved_protocol"], "openai")
+        self.assertEqual(payload["models"], ["qwen-plus", "qwen-turbo"])
+        mock_get.assert_called_once()
+        self.assertEqual(
+            mock_get.call_args.args[0],
+            "https://dashscope.aliyuncs.com/compatible-mode/v1/models",
+        )
+        self.assertEqual(
+            mock_get.call_args.kwargs["headers"]["Authorization"],
+            "Bearer sk-test-value",
+        )
+
+    def test_discover_llm_channel_models_requires_base_url(self) -> None:
+        payload = self.service.discover_llm_channel_models(
+            name="primary",
+            protocol="openai",
+            base_url="",
+            api_key="sk-test-value",
+        )
+
+        self.assertFalse(payload["success"])
+        self.assertIn("base URL", payload["error"])
+        self.assertEqual(payload["models"], [])
+
+    def test_discover_llm_channel_models_rejects_unsupported_protocol(self) -> None:
+        payload = self.service.discover_llm_channel_models(
+            name="gemini",
+            protocol="gemini",
+            base_url="https://example.com/v1",
+            api_key="sk-test-value",
+        )
+
+        self.assertFalse(payload["success"])
+        self.assertEqual(payload["resolved_protocol"], "gemini")
+        self.assertIn("does not support /models discovery yet", payload["error"])
+
     def test_validate_reports_invalid_event_rule_semantics(self) -> None:
         validation = self.service.validate(items=[{
             "key": "AGENT_EVENT_ALERT_RULES_JSON",
@@ -690,6 +749,7 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertIn("不会自动重建 scheduler", schedule_warning)
         self.assertIn("以 schedule 模式重新启动后生效", schedule_warning)
         self.assertNotIn("它属于启动期单次运行配置", schedule_warning)
+
 
     def test_validate_rejects_comma_only_api_key(self) -> None:
         """Whitespace/comma-only api_key must fail validation (P2: parsed-segment check)."""

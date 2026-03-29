@@ -147,6 +147,12 @@ interface ChannelTestState {
   text?: string;
 }
 
+interface ChannelDiscoveryState {
+  status: 'idle' | 'loading' | 'success' | 'error';
+  text?: string;
+  models: string[];
+}
+
 interface RuntimeConfig {
   primaryModel: string;
   agentPrimaryModel: string;
@@ -170,11 +176,13 @@ interface ChannelRowProps {
   visibleKey: boolean;
   expanded: boolean;
   testState?: ChannelTestState;
+  discoveryState?: ChannelDiscoveryState;
   onUpdate: (index: number, field: keyof ChannelConfig, value: string | boolean) => void;
   onRemove: (index: number) => void;
   onToggleExpand: (index: number) => void;
   onToggleKeyVisibility: (index: number, nextVisible: boolean) => void;
   onTest: (channel: ChannelConfig, index: number) => void;
+  onDiscoverModels: (channel: ChannelConfig, index: number) => void;
 }
 
 const ChannelRow: React.FC<ChannelRowProps> = ({
@@ -184,15 +192,20 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
   visibleKey,
   expanded,
   testState,
+  discoveryState,
   onUpdate,
   onRemove,
   onToggleExpand,
   onToggleKeyVisibility,
   onTest,
+  onDiscoverModels,
 }) => {
   const preset = CHANNEL_PRESETS[channel.name];
   const displayName = preset?.label || channel.name;
-  const modelCount = splitModels(channel.models).length;
+  const selectedModels = splitModels(channel.models);
+  const discoveredModels = discoveryState?.models || [];
+  const manualOnlyModels = selectedModels.filter((model) => !discoveredModels.includes(model));
+  const modelCount = selectedModels.length;
   const hasKey = channel.apiKey.length > 0;
   const statusVariant = testState?.status === 'success'
     ? 'success'
@@ -335,13 +348,69 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
             placeholder={channel.protocol === 'ollama' ? '本地 Ollama 可留空' : '支持多个 Key 逗号分隔'}
           />
 
-          <Input
-            label="模型（逗号分隔）"
-            value={channel.models}
-            disabled={busy}
-            onChange={(e) => onUpdate(index, 'models', e.target.value)}
-            placeholder={preset?.placeholder || MODEL_PLACEHOLDERS[channel.protocol]}
-          />
+          <div className="space-y-3 rounded-xl border border-[var(--settings-border)] bg-[var(--settings-surface-hover)] p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="settings-secondary"
+                size="sm"
+                className="px-3 text-[11px] shadow-none"
+                disabled={busy}
+                onClick={() => onDiscoverModels(channel, index)}
+              >
+                {discoveryState?.status === 'loading' ? '获取中...' : '获取模型'}
+              </Button>
+              <span className={`text-xs ${
+                discoveryState?.status === 'success'
+                  ? 'text-success'
+                  : discoveryState?.status === 'error'
+                    ? 'text-danger'
+                    : 'text-muted-text'
+              }`}
+              >
+                {discoveryState?.text || '支持 `/models` 的 OpenAI Compatible 渠道可自动拉取模型。'}
+              </span>
+            </div>
+
+            {discoveredModels.length > 0 ? (
+              <div>
+                <label className="mb-2 block text-sm font-medium text-foreground">可选模型（可多选）</label>
+                <div className="max-h-48 space-y-2 overflow-y-auto rounded-xl border border-[var(--settings-border)] bg-[var(--settings-surface)] p-3">
+                  {discoveredModels.map((model) => (
+                    <label key={model} className="flex items-center gap-2 text-sm text-secondary-text">
+                      <input
+                        type="checkbox"
+                        checked={selectedModels.includes(model)}
+                        disabled={busy}
+                        onChange={() => onUpdate(index, 'models', toggleModelSelection(channel.models, model))}
+                        className="settings-input-checkbox h-4 w-4 rounded border-border/70 bg-base"
+                      />
+                      <span>{model}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            <Input
+              label={discoveredModels.length > 0 ? '手动模型（逗号分隔）' : '模型（逗号分隔）'}
+              value={channel.models}
+              disabled={busy}
+              onChange={(e) => onUpdate(index, 'models', e.target.value)}
+              placeholder={preset?.placeholder || MODEL_PLACEHOLDERS[channel.protocol]}
+              hint={
+                discoveredModels.length > 0
+                  ? '如有自定义模型名未出现在列表中，可继续手动补充，保存格式仍为逗号分隔。'
+                  : '若渠道不支持自动发现或请求失败，可直接手动填写模型列表。'
+              }
+            />
+
+            {manualOnlyModels.length > 0 ? (
+              <p className="text-[11px] text-secondary-text">
+                额外手动模型：{manualOnlyModels.join('，')}
+              </p>
+            ) : null}
+          </div>
 
           <div className="flex items-center gap-2 pt-1">
             <Button
@@ -432,6 +501,14 @@ function splitModels(models: string): string[] {
     .split(',')
     .map((entry) => entry.trim())
     .filter(Boolean);
+}
+
+function toggleModelSelection(models: string, targetModel: string): string {
+  const selectedModels = splitModels(models);
+  if (selectedModels.includes(targetModel)) {
+    return selectedModels.filter((model) => model !== targetModel).join(',');
+  }
+  return [...selectedModels, targetModel].join(',');
 }
 
 const PROTOCOL_ALIASES: Record<string, string> = {
@@ -650,6 +727,7 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
   >(null);
   const [visibleKeys, setVisibleKeys] = useState<Record<number, boolean>>({});
   const [testStates, setTestStates] = useState<Record<number, ChannelTestState>>({});
+  const [discoveryStates, setDiscoveryStates] = useState<Record<number, ChannelDiscoveryState>>({});
   const [expandedRows, setExpandedRows] = useState<Record<number, boolean>>({});
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [addPreset, setAddPreset] = useState('aihubmix');
@@ -667,6 +745,7 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
     setRuntimeConfig(initialRuntimeConfig);
     setVisibleKeys({});
     setTestStates({});
+    setDiscoveryStates({});
     setExpandedRows({});
     setSaveMessage(null);
     setIsCollapsed(false);
@@ -739,12 +818,23 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
       delete next[index];
       return next;
     });
+    if (field !== 'models' && field !== 'enabled') {
+      setDiscoveryStates((previous) => {
+        if (!(index in previous)) {
+          return previous;
+        }
+        const next = { ...previous };
+        delete next[index];
+        return next;
+      });
+    }
   };
 
   const removeChannel = (index: number) => {
     setChannels((previous) => previous.filter((_, rowIndex) => rowIndex !== index));
     setVisibleKeys({});
     setTestStates({});
+    setDiscoveryStates({});
     setExpandedRows({});
   };
 
@@ -773,6 +863,7 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
       ];
     });
     setTestStates({});
+    setDiscoveryStates({});
     setExpandedRows((prev) => ({ ...prev, [channels.length]: true }));
     setIsCollapsed(false);
   };
@@ -874,6 +965,47 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
     }
   };
 
+  const handleDiscoverModels = async (channel: ChannelConfig, index: number) => {
+    setDiscoveryStates((previous) => ({
+      ...previous,
+      [index]: {
+        status: 'loading',
+        text: '正在获取模型列表...',
+        models: previous[index]?.models || [],
+      },
+    }));
+
+    try {
+      const result = await systemConfigApi.discoverLLMChannelModels({
+        name: channel.name,
+        protocol: channel.protocol,
+        baseUrl: channel.baseUrl,
+        apiKey: channel.apiKey,
+      });
+
+      setDiscoveryStates((previous) => ({
+        ...previous,
+        [index]: {
+          status: result.success ? 'success' : 'error',
+          text: result.success
+            ? `已获取 ${result.models.length} 个模型${result.latencyMs ? ` · ${result.latencyMs} ms` : ''}`
+            : (result.error || result.message || '获取模型失败'),
+          models: result.success ? result.models : (previous[index]?.models || []),
+        },
+      }));
+    } catch (error: unknown) {
+      const parsed = getParsedApiError(error);
+      setDiscoveryStates((previous) => ({
+        ...previous,
+        [index]: {
+          status: 'error',
+          text: parsed.message || '获取模型失败',
+          models: previous[index]?.models || [],
+        },
+      }));
+    }
+  };
+
   const toggleKeyVisibility = (index: number, nextVisible: boolean) => {
     setVisibleKeys((previous) => ({ ...previous, [index]: nextVisible }));
   };
@@ -915,7 +1047,7 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
             <Badge variant="info" className="settings-accent-badge">渠道管理</Badge>
           </div>
           <p className="text-xs text-muted-text">
-            添加服务商渠道，填入 API Key 和模型名称即可。配置会自动同步到 .env 文件。
+            添加服务商渠道后可自动获取模型列表并多选，也可继续手动填写。配置会自动同步到 .env 文件。
           </p>
         </div>
         <span className="text-xs text-muted-text">{isCollapsed ? '▶ 展开' : '▼ 收起'}</span>
@@ -971,11 +1103,13 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
                 visibleKey={Boolean(visibleKeys[index])}
                 expanded={Boolean(expandedRows[index])}
                 testState={testStates[index]}
+                discoveryState={discoveryStates[index]}
                 onUpdate={updateChannel}
                 onRemove={removeChannel}
                 onToggleExpand={toggleExpand}
                 onToggleKeyVisibility={toggleKeyVisibility}
                 onTest={(ch, idx) => void handleTest(ch, idx)}
+                onDiscoverModels={(ch, idx) => void handleDiscoverModels(ch, idx)}
               />
             ))}
           </div>
