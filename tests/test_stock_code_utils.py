@@ -6,7 +6,12 @@ Covers: is_code_like, normalize_code - including exchange prefix handling.
 
 import pytest
 
-from src.services.stock_code_utils import is_code_like, normalize_code
+from src.services.stock_code_utils import (
+    is_code_like,
+    is_tw_code,
+    normalize_code,
+    normalize_tw_code,
+)
 
 
 class TestIsCodeLike:
@@ -46,6 +51,9 @@ class TestIsCodeLike:
     def test_suffix_sh_rejects_5_digit_base(self):
         assert is_code_like("00700.SH") is False
 
+    def test_suffix_tw(self):
+        assert is_code_like("2330.TW") is True
+
     # --- Exchange prefix format (Issue #6 fix) ---
     def test_prefix_sh_upper(self):
         assert is_code_like("SH600519") is True
@@ -67,6 +75,9 @@ class TestIsCodeLike:
 
     def test_prefix_hk_rejects_6_digit_base(self):
         assert is_code_like("HK600519") is False
+
+    def test_bare_4_digit_is_not_globally_code_like(self):
+        assert is_code_like("2330") is False
 
     # --- US tickers ---
     def test_us_ticker(self):
@@ -122,6 +133,9 @@ class TestNormalizeCode:
     def test_suffix_sh_rejects_5_digit_base(self):
         assert normalize_code("00700.SH") is None
 
+    def test_suffix_tw_keeps_canonical_tw_form(self):
+        assert normalize_code("2330.TW") == "2330.TW"
+
     # --- Exchange prefix format (Issue #6 fix) ---
     def test_prefix_sh_upper(self):
         assert normalize_code("SH600519") == "600519"
@@ -158,3 +172,20 @@ class TestNormalizeCode:
     def test_partial_prefix_no_digits_returns_none(self):
         # SH followed by wrong digit count
         assert normalize_code("SH6005") is None
+
+
+class TestTaiwanCodeHelpers:
+    def test_normalize_tw_suffix(self):
+        assert normalize_tw_code("2330.TW") == "2330.TW"
+        assert normalize_tw_code("2330.tw") == "2330.TW"
+
+    def test_normalize_tw_bare_code(self):
+        assert normalize_tw_code("2330") == "2330.TW"
+
+    def test_is_tw_code_accepts_suffix_and_bare(self):
+        assert is_tw_code("2330.TW") is True
+        assert is_tw_code("2330") is True
+
+    def test_is_tw_code_rejects_invalid_inputs(self):
+        assert is_tw_code("23300") is False
+        assert is_tw_code("TW2330") is False

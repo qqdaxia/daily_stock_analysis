@@ -25,6 +25,7 @@ from typing import Callable, Optional, List, Tuple, Dict, Any
 import pandas as pd
 import numpy as np
 from src.data.stock_mapping import STOCK_NAME_MAP, is_meaningful_stock_name
+from src.services.stock_code_utils import normalize_tw_code
 from .fundamental_adapter import AkshareFundamentalAdapter
 
 # 配置日志
@@ -77,6 +78,8 @@ def normalize_stock_code(stock_code: str) -> str:
     - '920748.BJ'   -> '920748'   (strip .BJ suffix, BSE)
     - 'HK00700'     -> 'HK00700'  (keep HK prefix for HK stocks)
     - '1810.HK'     -> 'HK01810'  (normalize HK suffix to canonical prefix form)
+    - '2330.TW'     -> '2330.TW'  (keep Taiwan suffix as canonical form)
+    - '2330'        -> '2330.TW'  (treat bare 4-digit explicit inputs as TWSE)
     - 'AAPL'        -> 'AAPL'     (keep US stock ticker as-is)
 
     This function is applied at the DataProviderManager layer so that
@@ -84,6 +87,10 @@ def normalize_stock_code(stock_code: str) -> str:
     """
     code = stock_code.strip()
     upper = code.upper()
+
+    normalized_tw = normalize_tw_code(code, allow_bare=True)
+    if normalized_tw is not None:
+        return normalized_tw
 
     # Normalize HK prefix to a canonical 5-digit form (e.g. hk1810 -> HK01810)
     if upper.startswith('HK') and not upper.startswith('HK.'):
@@ -144,6 +151,11 @@ def _is_hk_market(code: str) -> bool:
     return False
 
 
+def _is_tw_market(code: str) -> bool:
+    """判定是否为台股代码（TWSE，统一使用 .TW 规范）。"""
+    return normalize_tw_code(code, allow_bare=True) is not None
+
+
 def _is_etf_code(code: str) -> bool:
     """判定 A 股 ETF 基金代码（保守规则）。"""
     normalized = normalize_stock_code(code)
@@ -155,11 +167,13 @@ def _is_etf_code(code: str) -> bool:
 
 
 def _market_tag(code: str) -> str:
-    """返回市场标签: cn/us/hk."""
+    """返回市场标签: cn/us/hk/tw."""
     if _is_us_market(code):
         return "us"
     if _is_hk_market(code):
         return "hk"
+    if _is_tw_market(code):
+        return "tw"
     return "cn"
 
 
@@ -217,8 +231,13 @@ def canonical_stock_code(code: str) -> str:
         'AAPL'    -> 'AAPL'
         '600519'  -> '600519'  (digits are unchanged)
         'hk00700' -> 'HK00700'
+        '2330'    -> '2330.TW'
     """
-    return (code or "").strip().upper()
+    raw = (code or "").strip()
+    normalized_tw = normalize_tw_code(raw, allow_bare=True)
+    if normalized_tw is not None:
+        return normalized_tw
+    return raw.upper()
 
 
 class DataFetchError(Exception):
@@ -826,14 +845,20 @@ class DataFetcherManager:
         total_fetchers = len(self._fetchers)
         request_start = time.time()
 
-        # 快速路径：美股指数与美股股票直接路由到 YfinanceFetcher
+        route_label = None
         if is_us_index_code(stock_code) or is_us_stock_code(stock_code):
+            route_label = "美股/美股指数"
+        elif _is_tw_market(stock_code):
+            route_label = "台股"
+
+        # 快速路径：YFinance 直连市场优先路由到 YfinanceFetcher
+        if route_label:
             for attempt, fetcher in enumerate(self._fetchers, start=1):
                 if fetcher.name == "YfinanceFetcher":
                     try:
                         logger.info(
                             f"[数据源尝试 {attempt}/{total_fetchers}] [{fetcher.name}] "
-                            f"美股/美股指数 {stock_code} 直接路由..."
+                            f"{route_label} {stock_code} 直接路由..."
                         )
                         df = fetcher.get_daily_data(
                             stock_code=stock_code,
@@ -858,7 +883,7 @@ class DataFetcherManager:
                         errors.append(error_msg)
                     break
             # YfinanceFetcher failed or not found
-            error_summary = f"美股/美股指数 {stock_code} 获取失败:\n" + "\n".join(errors)
+            error_summary = f"{route_label} {stock_code} 获取失败:\n" + "\n".join(errors)
             elapsed = time.time() - request_start
             logger.error(f"[数据源终止] {stock_code} 获取失败: elapsed={elapsed:.2f}s\n{error_summary}")
             raise DataFetchError(error_summary)
@@ -1070,6 +1095,25 @@ class DataFetcherManager:
                 break
 
             logger.warning(f"[实时行情] 港股 {stock_code} 无可用数据源")
+            return None
+
+        # 台股实时行情统一走 Yfinance，避免先打 A 股专用行情源。
+        if _is_tw_market(stock_code):
+            for fetcher in self._fetchers:
+                if fetcher.name != "YfinanceFetcher":
+                    continue
+                if not hasattr(fetcher, 'get_realtime_quote'):
+                    break
+                try:
+                    quote = fetcher.get_realtime_quote(stock_code)
+                    if quote is not None and quote.has_basic_data():
+                        logger.info(f"[实时行情] 台股 {stock_code} 成功获取 (来源: yfinance)")
+                        return quote
+                except Exception as e:
+                    logger.warning(f"[实时行情] 台股 {stock_code} 获取失败: {e}")
+                break
+
+            logger.warning(f"[实时行情] 台股 {stock_code} 无可用数据源")
             return None
         
         # 获取配置的数据源优先级
@@ -1775,7 +1819,7 @@ class DataFetcherManager:
         stock_code = normalize_stock_code(stock_code)
         market = _market_tag(stock_code)
         is_etf = _is_etf_code(stock_code)
-        if market in {"us", "hk"}:
+        if market in {"us", "hk", "tw"}:
             return self._build_market_not_supported(
                 market=market,
                 reason="market not supported",

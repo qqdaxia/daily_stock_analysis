@@ -130,7 +130,7 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 
 | Secret Name | Description | Required |
 |------------|------|:----:|
-| `STOCK_LIST` | Watchlist codes, e.g., `600519,AAPL,hk00700` | ✅ |
+| `STOCK_LIST` | Watchlist codes, e.g., `600519,AAPL,hk00700,2330.TW`; TW stocks also accept bare 4-digit inputs like `2330` | ✅ |
 | `TAVILY_API_KEYS` | [Tavily](https://tavily.com/) Search API (for news) | Recommended |
 | `MINIMAX_API_KEYS` | [MiniMax](https://platform.minimaxi.com/) Coding Plan Web Search (structured search results) | Optional |
 | `BRAVE_API_KEYS` | [Brave Search](https://brave.com/search/api/) API (privacy-focused, US stocks optimized) | Optional |
@@ -154,7 +154,10 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 | A-shares | 6-digit number | `600519`, `000001`, `300750` |
 | BSE (Beijing) | 8/4/92 prefix, 6-digit | `920748`, `838163`, `430047` |
 | HK Stocks | hk + 5-digit number | `hk00700`, `hk09988` |
+| TW Stocks | `xxxx.TW` (recommended) or bare 4 digits | `2330.TW`, `2454.TW`, `2330` |
 | US Stocks | 1-5 uppercase letters | `AAPL`, `TSLA`, `GOOGL` |
+
+> Taiwan support in this first iteration targets TWSE equities through the existing YFinance + search + LLM flow. Autocomplete index, TW ETFs/TWO listings, and market-review coverage are not included yet.
 
 #### 3. Enable Actions
 

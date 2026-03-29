@@ -108,7 +108,7 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 
 | Secret Name | Description | Required |
 |------------|------|:----:|
-| `STOCK_LIST` | Watchlist codes, e.g., `600519,300750,002594` | ✅ |
+| `STOCK_LIST` | Watchlist codes, e.g., `600519,300750,2330.TW`; Taiwan stocks also accept bare 4-digit inputs like `2330` | ✅ |
 | `TAVILY_API_KEYS` | [Tavily](https://tavily.com/) Search API (for news search) | Recommended |
 | `MINIMAX_API_KEYS` | [MiniMax](https://platform.minimaxi.com/) Coding Plan Web Search (structured search results) | Optional |
 | `BOCHA_API_KEYS` | [Bocha Search](https://open.bocha.cn/) Web Search API (Chinese search optimized, supports AI summaries, multiple keys comma-separated) | Optional |
@@ -584,8 +584,9 @@ System defaults to AkShare (free), also supports other data sources:
 
 ### YFinance
 - Free, no configuration needed
-- Supports US/HK stock data
+- Supports US/HK/TW stock data
 - US stock historical and real-time data both use YFinance exclusively to avoid technical indicator errors from akshare's US stock adjustment issues
+- Taiwan equities also use YFinance for daily bars, realtime quote fallback, and stock-name lookup in this first iteration
 
 ---
 
@@ -598,6 +599,21 @@ Use `hk` prefix for HK stock codes:
 ```bash
 STOCK_LIST=600519,hk00700,hk01810
 ```
+
+### Taiwan Stock Support
+
+The first iteration focuses on TWSE-listed equities and recommends the `.TW` suffix:
+
+```bash
+STOCK_LIST=2330.TW,2454.TW
+```
+
+`STOCK_LIST`, CLI, API, and manual Web analysis also accept bare 4-digit Taiwan inputs such as `2330`, which are normalized to `2330.TW`.
+
+Current scope limits:
+- Only TWSE equities directly supported by Yahoo Finance are covered.
+- Autocomplete index, TW ETFs/TWO listings, and market-review coverage are not included yet.
+- CN-only enrichments such as board rankings, capital flow, and dragon-tiger data stay `not_supported` for Taiwan stocks and fail open.
 
 ### Multi-Model Switching
 
@@ -783,6 +799,9 @@ python main.py --serve-only --host 0.0.0.0 --port 8888
 | A-shares | 6-digit number | `600519`, `000001`, `300750` |
 | BSE (Beijing) | 8/4/92 prefix, 6-digit | `920748`, `838163`, `430047` |
 | HK stocks | hk + 5-digit number | `hk00700`, `hk09988` |
+| TW stocks | `xxxx.TW` (recommended) or bare 4 digits | `2330.TW`, `2454.TW`, `2330` |
+| US stocks | 1-5 letters (optional .X suffix) | `AAPL`, `TSLA`, `BRK.B` |
+| US indices | SPX/DJI/IXIC etc. | `SPX`, `DJI`, `NASDAQ`, `VIX` |
 
 ### Notes
 

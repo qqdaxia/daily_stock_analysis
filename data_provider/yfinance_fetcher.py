@@ -34,6 +34,7 @@ from tenacity import (
 from .base import BaseFetcher, DataFetchError, STANDARD_COLUMNS, is_bse_code
 from .realtime_types import UnifiedRealtimeQuote, RealtimeSource
 from .us_index_mapping import get_us_index_yf_symbol, is_us_stock_code
+from src.services.stock_code_utils import normalize_tw_code
 
 # 可选导入本地股票映射补丁，若缺失则使用空字典兜底
 try:
@@ -86,6 +87,7 @@ class YfinanceFetcher(BaseFetcher):
         - A股沪市：600519.SS (Shanghai Stock Exchange)
         - A股深市：000001.SZ (Shenzhen Stock Exchange)
         - 港股：0700.HK (Hong Kong Stock Exchange)
+        - 台股：2330.TW (Taiwan Stock Exchange)
         - 美股：AAPL, TSLA, GOOGL (无需后缀)
 
         Args:
@@ -122,8 +124,13 @@ class YfinanceFetcher(BaseFetcher):
             logger.debug(f"转换港股代码: {stock_code} -> {hk_code}.HK")
             return f"{hk_code}.HK"
 
+        normalized_tw = normalize_tw_code(code, allow_bare=True)
+        if normalized_tw is not None:
+            logger.debug(f"转换台股代码: {stock_code} -> {normalized_tw}")
+            return normalized_tw
+
         # 已经包含后缀的情况
-        if '.SS' in code or '.SZ' in code or '.HK' in code or '.BJ' in code:
+        if '.SS' in code or '.SZ' in code or '.HK' in code or '.BJ' in code or '.TW' in code:
             return code
 
         # 去除可能的 .SH 后缀
@@ -379,6 +386,10 @@ class YfinanceFetcher(BaseFetcher):
         """
         return is_us_stock_code(stock_code)
 
+    def _is_tw_stock(self, stock_code: str) -> bool:
+        """判断代码是否为台股股票。"""
+        return normalize_tw_code(stock_code, allow_bare=True) is not None
+
     def _get_us_stock_quote_from_stooq(self, stock_code: str) -> Optional[UnifiedRealtimeQuote]:
         """
         使用 Stooq 为美股实时行情提供免密钥兜底。
@@ -617,9 +628,9 @@ class YfinanceFetcher(BaseFetcher):
 
     def get_realtime_quote(self, stock_code: str) -> Optional[UnifiedRealtimeQuote]:
         """
-        获取美股/美股指数实时行情数据
+        获取美股/台股/美股指数实时行情数据
 
-        支持美股股票（AAPL、TSLA）和美股指数（SPX、DJI 等）。
+        支持美股股票（AAPL、TSLA）、台股股票（2330.TW）和美股指数（SPX、DJI 等）。
         数据来源：yfinance Ticker.info
 
         Args:
@@ -639,14 +650,18 @@ class YfinanceFetcher(BaseFetcher):
                 index_name=index_name,
             )
 
-        # 仅处理美股股票
-        if not self._is_us_stock(stock_code):
-            logger.debug(f"[Yfinance] {stock_code} 不是美股，跳过")
+        is_tw_stock = self._is_tw_stock(stock_code)
+        is_us_stock = self._is_us_stock(stock_code)
+
+        # 仅处理美股/台股股票
+        if not is_us_stock and not is_tw_stock:
+            logger.debug(f"[Yfinance] {stock_code} 不是美股/台股，跳过")
             return None
 
         try:
-            symbol = stock_code.strip().upper()
-            logger.debug(f"[Yfinance] 获取美股 {symbol} 实时行情")
+            symbol = self._convert_stock_code(stock_code)
+            market_label = "台股" if is_tw_stock else "美股"
+            logger.debug(f"[Yfinance] 获取{market_label} {symbol} 实时行情")
 
             ticker = yf.Ticker(symbol)
 
@@ -669,8 +684,11 @@ class YfinanceFetcher(BaseFetcher):
                 logger.debug("[Yfinance] fast_info 失败，尝试 history 方法")
                 hist = ticker.history(period='2d')
                 if hist.empty:
-                    logger.warning(f"[Yfinance] 无法获取 {symbol} 的数据，尝试 Stooq 兜底")
-                    return self._get_us_stock_quote_from_stooq(symbol)
+                    if is_us_stock:
+                        logger.warning(f"[Yfinance] 无法获取 {symbol} 的数据，尝试 Stooq 兜底")
+                        return self._get_us_stock_quote_from_stooq(symbol)
+                    logger.warning(f"[Yfinance] 无法获取 {symbol} 的数据")
+                    return None
 
                 today = hist.iloc[-1]
                 prev = hist.iloc[-2] if len(hist) > 1 else today
@@ -724,12 +742,37 @@ class YfinanceFetcher(BaseFetcher):
                 circ_mv=None,
             )
 
-            logger.info(f"[Yfinance] 获取美股 {symbol} 实时行情成功: 价格={price}")
+            logger.info(f"[Yfinance] 获取{market_label} {symbol} 实时行情成功: 价格={price}")
             return quote
 
         except Exception as e:
-            logger.warning(f"[Yfinance] 获取美股 {stock_code} 实时行情失败: {e}，尝试 Stooq 兜底")
-            return self._get_us_stock_quote_from_stooq(stock_code)
+            if is_us_stock:
+                logger.warning(f"[Yfinance] 获取美股 {stock_code} 实时行情失败: {e}，尝试 Stooq 兜底")
+                return self._get_us_stock_quote_from_stooq(stock_code)
+            logger.warning(f"[Yfinance] 获取台股 {stock_code} 实时行情失败: {e}")
+            return None
+
+    def get_stock_name(self, stock_code: str) -> Optional[str]:
+        """通过 Yahoo Finance 获取美股/台股名称。"""
+        import yfinance as yf
+
+        yf_symbol, index_name = get_us_index_yf_symbol(stock_code)
+        if yf_symbol:
+            return index_name
+
+        if not self._is_us_stock(stock_code) and not self._is_tw_stock(stock_code):
+            return None
+
+        symbol = self._convert_stock_code(stock_code)
+        try:
+            ticker = yf.Ticker(symbol)
+            info = ticker.info or {}
+            name = info.get('shortName') or info.get('longName') or STOCK_NAME_MAP.get(symbol, '')
+            if is_meaningful_stock_name(name, symbol):
+                return str(name).strip()
+        except Exception as e:
+            logger.debug(f"[Yfinance] 获取股票名称失败 {symbol}: {e}")
+        return STOCK_NAME_MAP.get(symbol, '')
 
 
 if __name__ == "__main__":

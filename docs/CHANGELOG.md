@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] 🏷️ **Web 设置页新增版本信息卡片** — `apps/dsa-web` 现在会在构建时注入前端包版本与构建时间，系统设置页新增只读“版本信息”区块，展示 `WebUI 版本 / 构建标识 / 构建时间`；当 `package.json` 仍为占位版本 `0.0.0` 时，会自动回退为构建标识，方便 Docker 重建后快速确认当前静态资源是否已经生效。
 - [测试] 🧪 **补充设置页版本信息回归测试** — 新增 Web 设置页版本信息渲染断言，并覆盖占位版本 `0.0.0` 自动回退为构建标识的逻辑。
 - [测试] 🧪 **补充前端变更验证命令** — 对应前端资源变更同步执行 `cd apps/dsa-web && npm ci && npm run lint && npm run build`，作为版本信息展示与 Docker 重建生效验证的最小验证闭环记录。
+- [新功能] 首批补齐台股个股分析支持：`2330.TW` 与 `STOCK_LIST`/CLI/API/Web 手动输入中的裸四位代码现在都会按台股识别并优先路由到 YFinance，新闻检索、Prompt 市场语境与交易日历也同步加入台股语义；台股仍复用现有搜索/LLM 主链路，A股专属增强能力保持 `not_supported`/fail-open。
 
 ## [3.11.0] - 2026-03-27
 

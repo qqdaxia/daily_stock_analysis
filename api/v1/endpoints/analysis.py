@@ -51,7 +51,7 @@ from data_provider.base import canonical_stock_code, normalize_stock_code
 from src.config import Config
 from src.report_language import get_localized_stock_name, normalize_report_language
 from src.services.name_to_code_resolver import resolve_name_to_code
-from src.services.stock_code_utils import is_code_like
+from src.services.stock_code_utils import is_code_like, normalize_tw_code
 from src.services.task_queue import (
     get_task_queue,
     DuplicateTaskError,
@@ -83,7 +83,7 @@ def _invalid_analysis_input_error() -> HTTPException:
 
 def _is_obviously_invalid_analysis_input(text: str) -> bool:
     """Reject mixed alphanumeric noise and unsupported symbols early."""
-    if not text or is_code_like(text):
+    if not text or is_code_like(text) or normalize_tw_code(text, allow_bare=True):
         return False
 
     if not _SUPPORTED_FREE_TEXT_RE.fullmatch(text):
@@ -105,6 +105,10 @@ def _resolve_and_normalize_input(raw_value: str) -> str:
     text = (raw_value or "").strip()
     if not text:
         return ""
+
+    normalized_tw = normalize_tw_code(text, allow_bare=True)
+    if normalized_tw is not None:
+        return canonical_stock_code(normalized_tw)
 
     if is_code_like(text):
         return canonical_stock_code(text)

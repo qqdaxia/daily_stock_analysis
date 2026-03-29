@@ -12,12 +12,14 @@ Fixes: https://github.com/ZhuLinsen/daily_stock_analysis/issues/644
 import re
 from typing import Optional
 
+from src.services.stock_code_utils import normalize_tw_code
+
 
 def detect_market(stock_code: Optional[str]) -> str:
     """Detect market from stock code.
 
     Returns:
-        One of 'cn', 'hk', 'us', or 'cn' as fallback.
+        One of 'cn', 'hk', 'tw', 'us', or 'cn' as fallback.
     """
     if not stock_code:
         return "cn"
@@ -33,6 +35,9 @@ def detect_market(stock_code: Optional[str]) -> str:
     # 5-digit pure numbers are HK (A-shares are 6-digit)
     if code.isdigit() and len(code) == 5:
         return "hk"
+
+    if normalize_tw_code(code, allow_bare=True) is not None:
+        return "tw"
 
     # US stocks: 1-5 uppercase letters (AAPL, TSLA, GOOGL)
     # Also handles suffixed forms like BRK.B
@@ -53,6 +58,10 @@ _MARKET_ROLES = {
     "hk": {
         "zh": "港股",
         "en": "Hong Kong stock",
+    },
+    "tw": {
+        "zh": "台股",
+        "en": "Taiwan stock",
     },
     "us": {
         "zh": "美股",
@@ -79,6 +88,16 @@ _MARKET_GUIDELINES = {
         "en": (
             "- This analysis covers a **Hong Kong stock** (listed on HKEX).\n"
             "- HK stocks have no daily price limits, allow T+0 trading. Consider HKD FX, Southbound/Northbound flows, and HKEX-specific rules."
+        ),
+    },
+    "tw": {
+        "zh": (
+            "- 本次分析对象为 **台股**（台湾证券交易所上市股票）。\n"
+            "- 请结合台股常见涨跌幅限制、台币汇率、电子权值股与美股科技链联动来判断走势与风险。"
+        ),
+        "en": (
+            "- This analysis covers a **Taiwan stock** (listed on TWSE).\n"
+            "- Consider Taiwan market price-limit rules, TWD FX, and cross-market linkage with US tech and semiconductor supply chains."
         ),
     },
     "us": {

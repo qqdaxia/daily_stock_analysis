@@ -115,7 +115,7 @@ daily_stock_analysis/
 
 | Secret 名称 | 说明 | 必填 |
 |------------|------|:----:|
-| `STOCK_LIST` | 自选股代码，如 `600519,300750,002594` | ✅ |
+| `STOCK_LIST` | 自选股代码，如 `600519,300750,2330.TW`；台股也支持裸四位代码如 `2330` | ✅ |
 | `TAVILY_API_KEYS` | [Tavily](https://tavily.com/) 搜索 API（新闻搜索） | 推荐 |
 | `MINIMAX_API_KEYS` | [MiniMax](https://platform.minimaxi.com/) Coding Plan Web Search（结构化搜索结果） | 可选 |
 | `BOCHA_API_KEYS` | [博查搜索](https://open.bocha.cn/) Web Search API（中文搜索优化，支持AI摘要，多个key用逗号分隔） | 可选 |
@@ -516,8 +516,8 @@ docker run -e SCHEDULE_ENABLED=true -e SCHEDULE_RUN_IMMEDIATELY=false ...
 
 #### 交易日判断（Issue #373）
 
-默认根据自选股市场（A 股 / 港股 / 美股）和 `MARKET_REVIEW_REGION` 判断是否为交易日：
-- 使用 `exchange-calendars` 区分 A 股 / 港股 / 美股各自的交易日历（含节假日）
+默认根据自选股市场（A 股 / 港股 / 台股 / 美股）和 `MARKET_REVIEW_REGION` 判断是否为交易日：
+- 使用 `exchange-calendars` 区分 A 股 / 港股 / 台股 / 美股各自的交易日历（含节假日）
 - 混合持仓时，每只股票只在其市场开市日分析，休市股票当日跳过
 - 全部相关市场均为非交易日时，整体跳过执行（不启动 pipeline、不发推送）
 - 覆盖方式：`TRADING_DAY_CHECK_ENABLED=false` 或 命令行 `--force-run`
@@ -702,8 +702,9 @@ PUSHOVER_API_TOKEN=your_api_token
 
 ### YFinance
 - 免费，无需配置
-- 支持美股/港股数据
+- 支持美股/港股/台股数据
 - 美股历史数据与实时行情均统一使用 YFinance，以避免 akshare 美股复权异常导致的技术指标错误
+- 台股个股（日线、实时行情、股票名称）首期也统一走 YFinance，避免误打 A 股专用数据源
 
 ### 东财接口频繁失败时的处理
 
@@ -724,6 +725,21 @@ PUSHOVER_API_TOKEN=your_api_token
 ```bash
 STOCK_LIST=600519,hk00700,hk01810
 ```
+
+### 台股支持
+
+首期聚焦台湾上市个股分析，推荐使用 `.TW` 后缀：
+
+```bash
+STOCK_LIST=2330.TW,2454.TW
+```
+
+也兼容在 `STOCK_LIST`、CLI/API/Web 手动分析中直接填写裸四位代码，例如 `2330`，系统会按 `2330.TW` 解释。
+
+当前限制：
+- 首期仅覆盖可由 Yahoo Finance 直接获取的 TWSE 个股。
+- 自动补全索引、台股 ETF/TWO/兴柜与大盘复盘不在本次范围内。
+- A股专属增强能力（板块榜、资金流、龙虎榜等）对台股返回 `not_supported`，不会阻塞日报生成。
 
 ### ETF 与指数分析
 
@@ -935,6 +951,7 @@ python main.py --serve-only --host 0.0.0.0 --port 8888
 | A股 | 6位数字 | `600519`、`000001`、`300750` |
 | 北交所 | 8/4/92 开头 6 位 | `920748`、`838163`、`430047` |
 | 港股 | hk + 5位数字 | `hk00700`、`hk09988` |
+| 台股 | `xxxx.TW`（推荐）或裸 4 位 | `2330.TW`、`2454.TW`、`2330` |
 | 美股 | 1-5 字母（可选 .X 后缀） | `AAPL`、`TSLA`、`BRK.B` |
 | 美股指数 | SPX/DJI/IXIC 等 | `SPX`、`DJI`、`NASDAQ`、`VIX` |
 

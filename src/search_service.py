@@ -37,6 +37,7 @@ from src.config import (
     normalize_news_strategy_profile,
     resolve_news_window_days,
 )
+from src.services.stock_code_utils import normalize_tw_code
 
 logger = logging.getLogger(__name__)
 
@@ -1750,6 +1751,21 @@ class SearchService:
             return True
         return False
 
+    @staticmethod
+    def _is_tw_stock(stock_code: str) -> bool:
+        """判断是否为台股代码。"""
+        return normalize_tw_code(stock_code, allow_bare=True) is not None
+
+    @classmethod
+    def _market_for_stock(cls, stock_code: str) -> str:
+        """Return stock market tag used for query templates."""
+        if cls._is_tw_stock(stock_code):
+            return "tw"
+        if cls._is_foreign_stock(stock_code):
+            code = (stock_code or "").strip()
+            return "hk" if code.lower().startswith("hk") or code.upper().endswith(".HK") or (code.isdigit() and len(code) == 5) else "us"
+        return "cn"
+
     # A-share ETF code prefixes (Shanghai 51/52/56/58, Shenzhen 15/16/18)
     _A_ETF_PREFIXES = ('51', '52', '56', '58', '15', '16', '18')
     _ETF_NAME_KEYWORDS = ('ETF', 'FUND', 'TRUST', 'INDEX', 'TRACKER', 'UNIT')  # US/HK ETF name hints
@@ -2095,11 +2111,14 @@ class SearchService:
         provider_max_results = self._provider_request_size(max_results)
 
         # 构建搜索查询（优化搜索效果）
-        is_foreign = self._is_foreign_stock(stock_code)
+        market = self._market_for_stock(stock_code)
+        query_code = stock_code.split(".", 1)[0].upper()
         if focus_keywords:
             # 如果提供了关键词，直接使用关键词作为查询
             query = " ".join(focus_keywords)
-        elif is_foreign:
+        elif market == "tw":
+            query = f"{stock_name} {query_code} 台股 最新消息"
+        elif market in {"hk", "us"}:
             # 港股/美股使用英文搜索关键词
             query = f"{stock_name} {stock_code} stock latest news"
         else:
@@ -2202,7 +2221,10 @@ class SearchService:
             SearchResponse 对象
         """
         if event_types is None:
-            if self._is_foreign_stock(stock_code):
+            market = self._market_for_stock(stock_code)
+            if market == "tw":
+                event_types = ["法说会", "月营收", "财报"]
+            elif market in {"hk", "us"}:
                 event_types = ["earnings report", "insider selling", "quarterly results"]
             else:
                 event_types = ["年报预告", "减持公告", "业绩快报"]
@@ -2256,10 +2278,10 @@ class SearchService:
         results = {}
         search_count = 0
 
-        is_foreign = self._is_foreign_stock(stock_code)
+        market = self._market_for_stock(stock_code)
         is_index_etf = self.is_index_or_etf(stock_code, stock_name)
 
-        if is_foreign:
+        if market in {"hk", "us"}:
             search_dimensions = [
                 {
                     'name': 'latest_news',
@@ -2300,6 +2322,53 @@ class SearchService:
                     'query': (
                         f"{stock_name} {stock_code} index sector allocation holdings"
                         if is_index_etf else f"{stock_name} industry competitors market share outlook"
+                    ),
+                    'desc': '行业分析',
+                    'tavily_topic': None,
+                    'strict_freshness': False,
+                },
+            ]
+        elif market == "tw":
+            search_dimensions = [
+                {
+                    'name': 'latest_news',
+                    'query': f"{stock_name} {stock_code.split('.', 1)[0]} 台股 最新 新闻 重大 事件",
+                    'desc': '最新消息',
+                    'tavily_topic': 'news',
+                    'strict_freshness': True,
+                },
+                {
+                    'name': 'market_analysis',
+                    'query': f"{stock_name} 法说会 外资 投信 目标价 研究报告",
+                    'desc': '机构分析',
+                    'tavily_topic': None,
+                    'strict_freshness': False,
+                },
+                {
+                    'name': 'risk_check',
+                    'query': (
+                        f"{stock_name} 指数走势 跟踪误差 净值 表现"
+                        if is_index_etf else f"{stock_name} 台股 外资卖超 处分 停牌 诉讼 风险"
+                    ),
+                    'desc': '风险排查',
+                    'tavily_topic': None if is_index_etf else 'news',
+                    'strict_freshness': not is_index_etf,
+                },
+                {
+                    'name': 'earnings',
+                    'query': (
+                        f"{stock_name} 指数成分 净值 跟踪表现"
+                        if is_index_etf else f"{stock_name} 月营收 财报 EPS 毛利率 展望"
+                    ),
+                    'desc': '业绩预期',
+                    'tavily_topic': None,
+                    'strict_freshness': False,
+                },
+                {
+                    'name': 'industry',
+                    'query': (
+                        f"{stock_name} 指数成分股 行业配置 权重"
+                        if is_index_etf else f"{stock_name} 台湾 产业链 竞争对手 景气 循环"
                     ),
                     'desc': '行业分析',
                     'tavily_topic': None,

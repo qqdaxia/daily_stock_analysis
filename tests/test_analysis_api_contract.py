@@ -494,6 +494,78 @@ class AnalysisApiContractTestCase(unittest.TestCase):
             notify=True,
         )
 
+    def test_trigger_analysis_accepts_tw_suffix_code(self) -> None:
+        if trigger_analysis is None:
+            self.skipTest("fastapi is not installed in this test environment")
+
+        queue = MagicMock()
+        queue.submit_tasks_batch.return_value = ([], [])
+
+        with patch("api.v1.endpoints.analysis.get_task_queue", return_value=queue), \
+             patch("api.v1.endpoints.analysis.resolve_name_to_code") as resolve_mock:
+            response = trigger_analysis(
+                request=SimpleNamespace(
+                    stock_code="2330.TW",
+                    stock_codes=None,
+                    stock_name="台积电",
+                    original_query="2330.TW",
+                    selection_source="manual",
+                    report_type="detailed",
+                    force_refresh=False,
+                    async_mode=True,
+                    notify=True,
+                ),
+                config=SimpleNamespace(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        resolve_mock.assert_not_called()
+        queue.submit_tasks_batch.assert_called_once_with(
+            stock_codes=["2330.TW"],
+            stock_name="台积电",
+            original_query="2330.TW",
+            selection_source="manual",
+            report_type="detailed",
+            force_refresh=False,
+            notify=True,
+        )
+
+    def test_trigger_analysis_accepts_bare_tw_code_and_normalizes_it(self) -> None:
+        if trigger_analysis is None:
+            self.skipTest("fastapi is not installed in this test environment")
+
+        queue = MagicMock()
+        queue.submit_tasks_batch.return_value = ([], [])
+
+        with patch("api.v1.endpoints.analysis.get_task_queue", return_value=queue), \
+             patch("api.v1.endpoints.analysis.resolve_name_to_code") as resolve_mock:
+            response = trigger_analysis(
+                request=SimpleNamespace(
+                    stock_code="2330",
+                    stock_codes=None,
+                    stock_name=None,
+                    original_query="2330",
+                    selection_source="manual",
+                    report_type="detailed",
+                    force_refresh=False,
+                    async_mode=True,
+                    notify=True,
+                ),
+                config=SimpleNamespace(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        resolve_mock.assert_not_called()
+        queue.submit_tasks_batch.assert_called_once_with(
+            stock_codes=["2330.TW"],
+            stock_name=None,
+            original_query="2330",
+            selection_source="manual",
+            report_type="detailed",
+            force_refresh=False,
+            notify=True,
+        )
+
     def test_trigger_analysis_allows_stock_names_with_star_and_hyphen(self) -> None:
         if trigger_analysis is None:
             self.skipTest("fastapi is not installed in this test environment")
@@ -642,6 +714,62 @@ class AnalysisApiContractTestCase(unittest.TestCase):
             self.assertEqual(second.status_code, 409)
             self.assertEqual(json.loads(second.body)["error"], "duplicate_task")
             self.assertEqual(json.loads(second.body)["stock_code"], "600519.SH")
+            self.assertEqual(
+                json.loads(second.body)["existing_task_id"],
+                json.loads(first.body)["task_id"],
+            )
+        finally:
+            queue = AnalysisTaskQueue._instance
+            if queue is not None and queue is not original_instance:
+                executor = getattr(queue, "_executor", None)
+                if executor is not None and hasattr(executor, "shutdown"):
+                    executor.shutdown(wait=False, cancel_futures=True)
+            AnalysisTaskQueue._instance = original_instance
+
+    def test_trigger_analysis_rejects_cross_request_duplicate_for_tw_equivalent_shapes(self) -> None:
+        if trigger_analysis is None:
+            self.skipTest("fastapi is not installed in this test environment")
+
+        original_instance = AnalysisTaskQueue._instance
+        AnalysisTaskQueue._instance = None
+        try:
+            queue = AnalysisTaskQueue(max_workers=1)
+            queue._executor = type("ExecutorStub", (), {"submit": lambda self, *args, **kwargs: Future()})()
+
+            with patch("api.v1.endpoints.analysis.get_task_queue", return_value=queue):
+                first = trigger_analysis(
+                    request=SimpleNamespace(
+                        stock_code="2330",
+                        stock_codes=None,
+                        stock_name=None,
+                        original_query=None,
+                        selection_source=None,
+                        report_type="detailed",
+                        force_refresh=False,
+                        async_mode=True,
+                        notify=True,
+                    ),
+                    config=SimpleNamespace(),
+                )
+                second = trigger_analysis(
+                    request=SimpleNamespace(
+                        stock_code="2330.TW",
+                        stock_codes=None,
+                        stock_name=None,
+                        original_query=None,
+                        selection_source=None,
+                        report_type="detailed",
+                        force_refresh=False,
+                        async_mode=True,
+                        notify=True,
+                    ),
+                    config=SimpleNamespace(),
+                )
+
+            self.assertEqual(first.status_code, 202)
+            self.assertEqual(second.status_code, 409)
+            self.assertEqual(json.loads(second.body)["error"], "duplicate_task")
+            self.assertEqual(json.loads(second.body)["stock_code"], "2330.TW")
             self.assertEqual(
                 json.loads(second.body)["existing_task_id"],
                 json.loads(first.body)["task_id"],
