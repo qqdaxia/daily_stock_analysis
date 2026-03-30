@@ -829,6 +829,8 @@ class SystemConfigService:
             "FEISHU_APP_ID",
             "FEISHU_APP_SECRET",
             "FEISHU_WEBHOOK_URL",
+            "FEISHU_WEBHOOK_SECRET",
+            "FEISHU_WEBHOOK_KEYWORD",
             "FEISHU_STREAM_ENABLED",
             "FEISHU_FOLDER_TOKEN",
         }
