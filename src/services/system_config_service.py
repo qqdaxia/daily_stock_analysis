@@ -844,9 +844,13 @@ class SystemConfigService:
             and has_feishu_app_secret
             and has_feishu_folder_token
         )
-        feishu_stream_enabled = parse_env_bool(
-            effective_map.get("FEISHU_STREAM_ENABLED"),
-            default=False,
+        # Match runtime semantics: Config.from_env only enables stream mode
+        # when the value is exactly "true" (case-insensitive).
+        feishu_stream_enabled = (
+            (effective_map.get("FEISHU_STREAM_ENABLED") or "false")
+            .strip()
+            .lower()
+            == "true"
         )
         if (
             has_feishu_app_credentials
