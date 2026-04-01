@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [文档] FAQ 补充 Ollama `OllamaException / APIConnectionError` 连接失败排障条目（Q12c），覆盖服务未启动、URL 配置错误、模型前缀缺失、模型未下载、远程防火墙等 5 个检查点
 - [修复] 技能加载异常被静默吞没问题 — 在 ask.py、skills/aggregator.py、skills/router.py 的静默 except 块补充 logger.warning 日志，确保技能列表为空时有日志可查（fixes #970）
 - [修复] SQLite 主写入链路现在对 `stock_daily(code,date)` 使用批量原子 upsert，并在文件型 SQLite 连接上默认启用 `WAL`、`busy_timeout` 与有限写入重试，降低批量分析和并发回写场景下的锁竞争与吞吐抖动，返回值中的“新增数”改为按本次真正插入窗口计算（并发场景不再把并行写入行误算入当前调用）。
+- [修复] 修复输入 5 位裸数字代码（如 '02714'）被误路由到港股路径导致分析错误股票的问题：`normalize_stock_code` 现在对首位为 '0'、补全后落入深市 A 股 000–003 前缀范围且不在已知港股白名单内的 5 位代码自动补前导 '0' 并打印歧义警告；如本意为港股，应使用 'HK02714' 或 '02714.HK' 格式消除歧义。
 
 ## [3.12.0] - 2026-04-01
 
