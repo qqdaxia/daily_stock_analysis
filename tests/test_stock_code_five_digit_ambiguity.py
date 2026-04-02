@@ -7,7 +7,7 @@ HK stock path and returned wrong data (蒙牛乳业 HK:02319).
 
 Covered acceptance criteria:
 1. '002714' → '002714'  (6-digit A-share, unchanged)
-2. '02714'  → '02714'   (5-digit, kept as-is; upstream decides routing)
+2. '02714'  → '02714'   (5-digit, kept as-is; manager 在港股路径无数据时可尝试补零到 '002714')
 3. '00700'  → '00700'   (known HK, kept as-is)
 4. 'HK02714' → 'HK02714' (explicit HK prefix, stays HK)
 5. '02714.HK' → 'HK02714' (explicit HK suffix, stays HK)
@@ -15,6 +15,7 @@ Covered acceptance criteria:
 """
 
 import sys
+import pandas as pd
 import unittest
 from unittest.mock import MagicMock
 
@@ -25,12 +26,39 @@ if "json_repair" not in sys.modules:
     sys.modules["json_repair"] = MagicMock()
 
 try:
-    from data_provider.base import normalize_stock_code, _KNOWN_HK_BARE_CODES
+    from data_provider.base import DataFetchError, DataFetcherManager, normalize_stock_code, _KNOWN_HK_BARE_CODES
     _IMPORTS_OK = True
     _IMPORT_ERROR = ""
 except ImportError as e:
     _IMPORTS_OK = False
     _IMPORT_ERROR = str(e)
+
+
+def _sample_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": ["2026-03-01", "2026-03-02"],
+            "open": [1.0, 1.1],
+            "high": [1.2, 1.2],
+            "low": [0.9, 1.0],
+            "close": [1.1, 1.05],
+            "volume": [1000, 1000],
+            "amount": [10000, 10000],
+            "pct_chg": [0.5, 0.5],
+        }
+    )
+
+
+class _MockDailyFetcher:
+    def __init__(self, name: str, priority: int, result_provider):
+        self.name = name
+        self.priority = priority
+        self._result_provider = result_provider
+        self.calls = []
+
+    def get_daily_data(self, stock_code: str, start_date: str | None = None, end_date: str | None = None, days: int = 30):
+        self.calls.append(stock_code)
+        return self._result_provider(stock_code=stock_code, start_date=start_date, end_date=end_date, days=days)
 
 
 @unittest.skipIf(not _IMPORTS_OK, f"imports failed: {_IMPORT_ERROR}")
@@ -113,6 +141,30 @@ class TestFiveDigitAmbiguity(unittest.TestCase):
     def test_known_hk_bare_codes_contains_02319(self):
         """'02319' (蒙牛乳业, not in old STOCK_NAME_MAP) must be in the HK whitelist."""
         self.assertIn("02319", _KNOWN_HK_BARE_CODES)
+
+    def test_manager_fallback_to_ashare_after_hk_empty(self):
+        """港股路径无数据时会补零重试 A 股候选码。"""
+
+        def result_provider(stock_code: str, **_):
+            if stock_code == "002714":
+                return _sample_df()
+            return None
+
+        fetcher = _MockDailyFetcher("AkshareFetcher", 1, result_provider)
+        manager = DataFetcherManager(fetchers=[fetcher])
+        df, source = manager.get_daily_data("02714", start_date="2026-03-01", end_date="2026-03-02")
+        self.assertEqual(source, "AkshareFetcher")
+        self.assertEqual(fetcher.calls, ["02714", "002714"])
+        self.assertEqual(len(df), 2)
+
+    def test_manager_does_not_retry_padded_for_explicit_hk_code(self):
+        """显式 HK 代码不会触发 6 位补零兜底。"""
+
+        fetcher = _MockDailyFetcher("AkshareFetcher", 1, lambda **_: None)
+        manager = DataFetcherManager(fetchers=[fetcher])
+        with self.assertRaises(DataFetchError):
+            manager.get_daily_data("HK02714", start_date="2026-03-01", end_date="2026-03-02")
+        self.assertEqual(fetcher.calls, ["HK02714"])
 
     # --- Other normalize_stock_code behaviours must be preserved ---
 

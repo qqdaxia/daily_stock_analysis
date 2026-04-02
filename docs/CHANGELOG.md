@@ -26,8 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [文档] FAQ 补充 Ollama `OllamaException / APIConnectionError` 连接失败排障条目（Q12c），覆盖服务未启动、URL 配置错误、模型前缀缺失、模型未下载、远程防火墙等 5 个检查点
 - [修复] 技能加载异常被静默吞没问题 — 在 ask.py、skills/aggregator.py、skills/router.py 的静默 except 块补充 logger.warning 日志，确保技能列表为空时有日志可查（fixes #970）
 - [修复] SQLite 主写入链路现在对 `stock_daily(code,date)` 使用批量原子 upsert，并在文件型 SQLite 连接上默认启用 `WAL`、`busy_timeout` 与有限写入重试，降低批量分析和并发回写场景下的锁竞争与吞吐抖动，返回值中的“新增数”改为按本次真正插入窗口计算（并发场景不再把并行写入行误算入当前调用）。
+- [修复] 5 位裸数字代码误路由 — `normalize_stock_code` 保持纯语法处理不再自动补零；`DataFetcherManager.get_daily_data` 先按港股通道取数，若首轮无数据再尝试补零按 A 股码重试（如 02714→002714）（fixes #946）
 - [修复] 修复输入 5 位裸数字代码（如 '02714'）被误路由到港股路径导致分析错误股票的问题：`normalize_stock_code` 现在对首位为 '0'、补全后落入深市 A 股 000–003 前缀范围且不在已知港股白名单内的 5 位代码自动补前导 '0' 并打印歧义警告；如本意为港股，应使用 'HK02714' 或 '02714.HK' 格式消除歧义。
 - [修复] 修复 5 位裸数字港股代码（如 '02319' 蒙牛乳业）因不在旧 STOCK_NAME_MAP 白名单中被误补全为 A 股代码的回归问题：`normalize_stock_code` 现在对所有 5 位纯数字代码保持"纯语法"规范化，不再做市场推断或自动补零，由上层 DataFetcherManager / 管线在首轮查询无数据时决定是否以补零 A 股代码重试；如需明确指定港股，请使用 'HK02319' 或 '02319.HK' 格式。
+- [修复] 修复 5 位裸数字代码误路由：`normalize_stock_code` 保持纯语法处理，不再在规范化层自动补零；`DataFetcherManager.get_daily_data` 先按港股通道取数，若 5 位裸码在首轮仍无数据，再尝试补零后按 6 位 A 股码重试（如 02714→002714）。
 
 ## [3.12.0] - 2026-04-01
 
