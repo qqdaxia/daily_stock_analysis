@@ -29,6 +29,8 @@ class HistoryItem(BaseModel):
         le=100
     )
     operation_advice: Optional[str] = Field(None, description="操作建议")
+    current_price: Optional[float] = Field(None, description="分析时价格")
+    change_pct: Optional[float] = Field(None, description="分析时涨跌幅(%)")
     created_at: Optional[str] = Field(None, description="创建时间")
     
     class Config:
@@ -41,6 +43,8 @@ class HistoryItem(BaseModel):
                 "report_type": "detailed",
                 "sentiment_score": 75,
                 "operation_advice": "持有",
+                "current_price": 1823.5,
+                "change_pct": 1.26,
                 "created_at": "2024-01-01T12:00:00"
             }
         }

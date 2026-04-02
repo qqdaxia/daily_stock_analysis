@@ -106,6 +106,8 @@ def get_history_list(
                 report_type=item.get("report_type"),
                 sentiment_score=item.get("sentiment_score"),
                 operation_advice=item.get("operation_advice"),
+                current_price=item.get("current_price"),
+                change_pct=item.get("change_pct"),
                 created_at=item.get("created_at")
             )
             for item in result.get("items", [])

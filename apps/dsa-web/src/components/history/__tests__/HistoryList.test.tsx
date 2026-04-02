@@ -23,6 +23,8 @@ const items: HistoryItem[] = [
     stockName: '贵州茅台',
     sentimentScore: 82,
     operationAdvice: '买入',
+    currentPrice: 1823.5,
+    changePct: 1.26,
     createdAt: '2026-03-15T08:00:00Z',
   },
 ];
@@ -64,6 +66,7 @@ describe('HistoryList', () => {
 
     expect(screen.getByText('已选 1')).toBeInTheDocument();
     expect(screen.getByText('买入 82')).toBeInTheDocument();
+    expect(screen.getByText('分析时 1823.50 +1.26%')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /贵州茅台/i }));
     expect(onItemClick).toHaveBeenCalledWith(1);
@@ -108,6 +111,25 @@ describe('HistoryList', () => {
     const fullNameHidden = screen.queryByText('贵州茅台股票股份有限公司');
     expect(fullNameHidden).toBeInTheDocument();
     expect(fullNameHidden).toHaveClass('hidden');
+  });
+
+  it('keeps the list quiet when price snapshot is unavailable', () => {
+    render(
+      <HistoryList
+        {...baseProps}
+        items={[
+          {
+            ...items[0],
+            id: 3,
+            queryId: 'q-3',
+            currentPrice: undefined,
+            changePct: undefined,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.queryByText(/分析时/)).not.toBeInTheDocument();
   });
 
   it('generates unique select-all ids across multiple instances', () => {

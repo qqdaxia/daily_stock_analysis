@@ -60,6 +60,40 @@ class HistoryService:
             db_manager: Database manager (optional, defaults to singleton instance)
         """
         self.db = db_manager or DatabaseManager.get_instance()
+
+    @staticmethod
+    def _extract_price_snapshot(
+        context_snapshot: Any,
+        raw_result: Any,
+    ) -> Tuple[Optional[float], Optional[float]]:
+        """Extract the analysis-time price snapshot from persisted payloads."""
+        current_price = None
+        change_pct = None
+
+        if isinstance(context_snapshot, str):
+            context_snapshot = parse_json_field(context_snapshot)
+        if isinstance(raw_result, str):
+            raw_result = parse_json_field(raw_result)
+
+        if isinstance(context_snapshot, dict):
+            enhanced_context = context_snapshot.get("enhanced_context") or {}
+            realtime = enhanced_context.get("realtime") or {}
+            current_price = realtime.get("price")
+            change_pct = realtime.get("change_pct") or realtime.get("change_60d")
+
+            realtime_quote_raw = context_snapshot.get("realtime_quote_raw") or {}
+            if current_price is None:
+                current_price = realtime_quote_raw.get("price")
+            if change_pct is None:
+                change_pct = realtime_quote_raw.get("change_pct") or realtime_quote_raw.get("pct_chg")
+
+        if isinstance(raw_result, dict):
+            if current_price is None:
+                current_price = raw_result.get("current_price")
+            if change_pct is None:
+                change_pct = raw_result.get("change_pct")
+
+        return current_price, change_pct
     
     def get_history_list(
         self,
@@ -114,6 +148,12 @@ class HistoryService:
             # Convert to response format
             items = []
             for record in records:
+                raw_result = parse_json_field(record.raw_result)
+                context_snapshot = parse_json_field(record.context_snapshot)
+                current_price, change_pct = self._extract_price_snapshot(
+                    context_snapshot=context_snapshot,
+                    raw_result=raw_result,
+                )
                 items.append({
                     "id": record.id,
                     "query_id": record.query_id,
@@ -122,6 +162,8 @@ class HistoryService:
                     "report_type": record.report_type,
                     "sentiment_score": record.sentiment_score,
                     "operation_advice": record.operation_advice,
+                    "current_price": current_price,
+                    "change_pct": change_pct,
                     "created_at": record.created_at.isoformat() if record.created_at else None,
                 })
             

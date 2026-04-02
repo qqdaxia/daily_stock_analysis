@@ -294,6 +294,34 @@ class AnalysisHistoryTestCase(unittest.TestCase):
         self.assertEqual(detail.get("stop_loss"), "110.0")
         self.assertEqual(detail.get("take_profit"), "150.0")
 
+    def test_history_list_includes_analysis_time_price_snapshot(self) -> None:
+        """History list should expose analysis-time price snapshot fields for UI display."""
+        result = self._build_result()
+        result.current_price = 1823.5
+        result.change_pct = 1.26
+
+        saved = self.db.save_analysis_history(
+            result=result,
+            query_id="query_history_list_price_001",
+            report_type="simple",
+            news_content="新闻摘要",
+            context_snapshot={
+                "enhanced_context": {
+                    "realtime": {
+                        "price": 1823.5,
+                        "change_pct": 1.26,
+                    }
+                }
+            },
+            save_snapshot=True,
+        )
+        self.assertEqual(saved, 1)
+
+        history = HistoryService(self.db).get_history_list(limit=10)
+        self.assertEqual(history["total"], 1)
+        self.assertEqual(history["items"][0]["current_price"], 1823.5)
+        self.assertEqual(history["items"][0]["change_pct"], 1.26)
+
     def test_history_detail_uses_fundamental_snapshot_fallback_when_context_missing(self) -> None:
         """When context_snapshot is disabled, detail API should fallback to fundamental_snapshot."""
         if get_history_detail is None:

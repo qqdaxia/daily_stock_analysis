@@ -34,6 +34,30 @@ const getOperationBadgeLabel = (advice?: string) => {
   return normalized.split(/[，。；、\s]/)[0] || '建议';
 };
 
+const getPriceChangeStyle = (changePct?: number): React.CSSProperties | undefined => {
+  if (changePct === undefined || changePct === null) {
+    return undefined;
+  }
+
+  if (changePct > 0) {
+    return { color: 'var(--home-price-up)' };
+  }
+
+  if (changePct < 0) {
+    return { color: 'var(--home-price-down)' };
+  }
+
+  return undefined;
+};
+
+const formatChangePct = (changePct?: number): string | null => {
+  if (changePct === undefined || changePct === null) {
+    return null;
+  }
+  const sign = changePct > 0 ? '+' : '';
+  return `${sign}${changePct.toFixed(2)}%`;
+};
+
 export const HistoryListItem: React.FC<HistoryListItemProps> = ({
   item,
   isViewing,
@@ -45,6 +69,8 @@ export const HistoryListItem: React.FC<HistoryListItemProps> = ({
   const sentimentColor = item.sentimentScore !== undefined ? getSentimentColor(item.sentimentScore) : null;
   const stockName = item.stockName || item.stockCode;
   const isTruncated = isStockNameTruncated(stockName);
+  const formattedChangePct = formatChangePct(item.changePct);
+  const priceStyle = getPriceChangeStyle(item.changePct);
 
   return (
     <div className="flex items-start gap-2 group">
@@ -77,14 +103,26 @@ export const HistoryListItem: React.FC<HistoryListItemProps> = ({
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
-                <span className="truncate text-sm font-semibold text-foreground tracking-tight">
-                  <span className="group-hover/item:hidden">
-                    {truncateStockName(stockName)}
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="truncate text-sm font-semibold text-foreground tracking-tight">
+                    <span className="group-hover/item:hidden">
+                      {truncateStockName(stockName)}
+                    </span>
+                    <span className="hidden group-hover/item:inline">
+                      {stockName}
+                    </span>
                   </span>
-                  <span className="hidden group-hover/item:inline">
-                    {stockName}
-                  </span>
-                </span>
+                  {item.currentPrice !== undefined && item.currentPrice !== null && (
+                    <span
+                      className="shrink-0 text-xs font-semibold font-mono"
+                      style={priceStyle}
+                      aria-label={`分析时价格 ${item.currentPrice.toFixed(2)}${formattedChangePct ? ` ${formattedChangePct}` : ''}`}
+                    >
+                      分析时 {item.currentPrice.toFixed(2)}
+                      {formattedChangePct ? ` ${formattedChangePct}` : ''}
+                    </span>
+                  )}
+                </div>
               </div>
               {sentimentColor && (
                 <Badge
