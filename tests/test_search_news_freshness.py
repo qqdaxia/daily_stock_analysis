@@ -346,6 +346,37 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
         p1.search.assert_called_once()
         p2.search.assert_not_called()
 
+    def test_search_stock_news_tries_next_provider_for_prefixed_a_share_with_english_name(self) -> None:
+        """A-share exchange suffix/prefix should still trigger Chinese-provider fallback."""
+        fresh = datetime.now().date().isoformat()
+        service = SearchService(
+            bocha_keys=["dummy_key"],
+            searxng_public_instances_enabled=False,
+            news_max_age_days=3,
+            news_strategy_profile="short",
+        )
+
+        p1 = SimpleNamespace(
+            is_available=True,
+            name="P1",
+            search=MagicMock(
+                return_value=_response([_result("600519.SH English headline", fresh)])
+            ),
+        )
+        p2 = SimpleNamespace(
+            is_available=True,
+            name="P2",
+            search=MagicMock(
+                return_value=_response([_result("贵州茅台 600519 发布分红公告", fresh)])
+            ),
+        )
+        service._providers = [p1, p2]
+
+        resp = service.search_stock_news("600519.SH", "Moutai", max_results=1)
+        self.assertEqual([r.title for r in resp.results], ["贵州茅台 600519 发布分红公告"])
+        p1.search.assert_called_once()
+        p2.search.assert_called_once()
+
     def test_search_stock_news_brave_locale_matches_market_context(self) -> None:
         """Brave locale should follow Chinese-preferred vs US-stock contexts."""
         fresh_dt = datetime.now(timezone.utc).replace(microsecond=0)
