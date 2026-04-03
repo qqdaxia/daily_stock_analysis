@@ -1469,8 +1469,23 @@ class DatabaseManager:
         def _write(session: Session) -> int:
             if self._is_sqlite_engine:
                 # SQLite has a per-statement bind-parameter limit (commonly 999).
-                # Each record has ~15 columns, so chunk to stay well within bounds.
+                # Each record has ~15 columns, so chunk upserts to stay within bounds.
                 _SQLITE_CHUNK = 50
+                # Count pre-existing rows in chunks (safe IN clause size) before
+                # the upsert so we can derive new-insert count without relying on
+                # timestamps (which can double-count under frozen clocks or races).
+                _COUNT_CHUNK = 500
+                prior_count = sum(
+                    session.execute(
+                        select(func.count()).select_from(StockDaily).where(
+                            and_(
+                                StockDaily.code == code,
+                                StockDaily.date.in_(batch_dates[j : j + _COUNT_CHUNK]),
+                            )
+                        )
+                    ).scalar() or 0
+                    for j in range(0, len(batch_dates), _COUNT_CHUNK)
+                )
                 for i in range(0, len(records), _SQLITE_CHUNK):
                     chunk = records[i : i + _SQLITE_CHUNK]
                     stmt = sqlite_insert(StockDaily).values(chunk)
@@ -1495,6 +1510,7 @@ class DatabaseManager:
                             },
                         )
                     )
+                return len(batch_dates) - prior_count
             else:
                 existing_rows = {
                     row.date: row
@@ -1507,10 +1523,12 @@ class DatabaseManager:
                         )
                     ).scalars().all()
                 }
+                new_count = 0
                 for record in records:
                     existing = existing_rows.get(record['date'])
                     if existing is None:
                         session.add(StockDaily(**record))
+                        new_count += 1
                         continue
                     existing.open = record['open']
                     existing.high = record['high']
@@ -1525,21 +1543,7 @@ class DatabaseManager:
                     existing.volume_ratio = record['volume_ratio']
                     existing.data_source = record['data_source']
                     existing.updated_at = record['updated_at']
-
-            # Derive actual insert count from upsert result: created_at is
-            # NOT in the ON CONFLICT SET clause, so only genuinely new rows
-            # carry the current `now` timestamp.
-            session.flush()
-            new_count = session.execute(
-                select(func.count()).select_from(StockDaily).where(
-                    and_(
-                        StockDaily.code == code,
-                        StockDaily.date.in_(batch_dates),
-                        StockDaily.created_at == now,
-                    )
-                )
-            ).scalar()
-            return new_count or 0
+                return new_count
 
         try:
             saved_count = self._run_write_transaction(
