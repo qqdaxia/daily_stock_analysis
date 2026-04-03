@@ -365,6 +365,70 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
                 self.assertEqual(params["search_lang"], expected_lang)
                 self.assertEqual(params["country"], expected_country)
 
+    def test_search_comprehensive_intel_tries_next_provider_when_a_share_results_are_english_only(self) -> None:
+        """A-share intel search should keep probing providers until Chinese results appear."""
+        fresh = datetime.now().date().isoformat()
+        service = SearchService(
+            bocha_keys=["dummy_key"],
+            searxng_public_instances_enabled=False,
+            news_max_age_days=3,
+            news_strategy_profile="short",
+        )
+
+        p1 = SimpleNamespace(
+            is_available=True,
+            name="P1",
+            search=MagicMock(return_value=_response([_result("English headline", fresh)])),
+        )
+        p2 = SimpleNamespace(
+            is_available=True,
+            name="P2",
+            search=MagicMock(return_value=_response([_result("中文资讯", fresh)])),
+        )
+        service._providers = [p1, p2]
+
+        with patch("src.search_service.time.sleep"):
+            intel = service.search_comprehensive_intel("SH600519", "Kweichow Moutai", max_searches=1)
+
+        self.assertEqual([r.title for r in intel["latest_news"].results], ["中文资讯"])
+        self.assertEqual(intel["latest_news"].provider, "Mock")
+        p1.search.assert_called_once()
+        p2.search.assert_called_once()
+
+    def test_search_comprehensive_intel_brave_locale_matches_market_context(self) -> None:
+        """Brave locale hints should also apply to comprehensive intel searches."""
+        fresh_dt = datetime.now(timezone.utc).replace(microsecond=0)
+        fresh_iso = fresh_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        fake_response = MagicMock()
+        fake_response.status_code = 200
+        fake_response.json.return_value = {
+            "web": {
+                "results": [
+                    {
+                        "title": "中文资讯",
+                        "description": "中文摘要",
+                        "url": "https://example.com/news",
+                        "age": fresh_iso,
+                    }
+                ]
+            }
+        }
+
+        with patch("src.search_service.requests.get", return_value=fake_response) as mock_get:
+            service = SearchService(
+                brave_keys=["dummy_key"],
+                searxng_public_instances_enabled=False,
+                news_max_age_days=3,
+                news_strategy_profile="short",
+            )
+            with patch("src.search_service.time.sleep"):
+                intel = service.search_comprehensive_intel("SH600519", "Kweichow Moutai", max_searches=1)
+
+        self.assertEqual(len(intel["latest_news"].results), 1)
+        params = mock_get.call_args.kwargs["params"]
+        self.assertEqual(params["search_lang"], "zh-hans")
+        self.assertEqual(params["country"], "CN")
+
     def test_search_comprehensive_intel_splits_strict_and_non_strict_filters(self) -> None:
         """Latest news stays strict while market analysis keeps undated results."""
         today = datetime.now().date()

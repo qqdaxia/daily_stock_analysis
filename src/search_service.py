@@ -2821,6 +2821,7 @@ class SearchService:
 
         is_foreign = self._is_foreign_stock(stock_code)
         is_index_etf = self.is_index_or_etf(stock_code, stock_name)
+        prefer_chinese = self._should_prefer_chinese_news(stock_code, stock_name)
 
         if is_foreign:
             search_dimensions = [
@@ -2956,50 +2957,127 @@ class SearchService:
             available_providers = [p for p in self._providers if p.is_available]
             if not available_providers:
                 break
-            
-            provider = available_providers[provider_index % len(available_providers)]
-            provider_index += 1
-            
-            logger.info(f"[情报搜索] {dim['desc']}: 使用 {provider.name}")
 
-            if isinstance(provider, TavilySearchProvider) and dim.get('tavily_topic'):
+            start_index = provider_index % len(available_providers)
+            provider_candidates = (
+                available_providers[start_index:] + available_providers[:start_index]
+            )
+            provider_index += 1
+
+            selected_response = SearchResponse(
+                query=dim['query'],
+                results=[],
+                provider="None",
+                success=False,
+                error_message="所有搜索引擎都不可用或搜索失败",
+            )
+            fallback_response: Optional[SearchResponse] = None
+            found_preferred_response = False
+            had_provider_success = False
+
+            for provider in provider_candidates:
+                logger.info(f"[情报搜索] {dim['desc']}: 使用 {provider.name}")
+
+                search_kwargs: Dict[str, Any] = {}
+                if isinstance(provider, TavilySearchProvider) and dim.get('tavily_topic'):
+                    search_kwargs["topic"] = dim['tavily_topic']
+                elif isinstance(provider, BraveSearchProvider):
+                    search_kwargs.update(
+                        self._brave_search_locale(
+                            stock_code,
+                            prefer_chinese=prefer_chinese,
+                        )
+                    )
+
                 response = provider.search(
                     dim['query'],
                     max_results=provider_max_results,
                     days=search_days,
-                    topic=dim['tavily_topic'],
+                    **search_kwargs,
+                )
+                if dim['strict_freshness']:
+                    filtered_response = self._filter_news_response(
+                        response,
+                        search_days=search_days,
+                        max_results=target_per_dimension,
+                        log_scope=f"{stock_code}:{provider.name}:{dim['name']}",
+                    )
+                else:
+                    filtered_response = self._normalize_and_limit_response(
+                        response,
+                        max_results=target_per_dimension,
+                    )
+
+                prioritized_response, preferred_count = self._prioritize_news_language(
+                    filtered_response,
+                    prefer_chinese=prefer_chinese,
+                )
+                prioritized_response = self._limit_search_response(
+                    prioritized_response,
+                    max_results=target_per_dimension,
+                )
+                selected_response = prioritized_response
+                had_provider_success = had_provider_success or bool(response.success)
+
+                if response.success:
+                    logger.info(
+                        "[情报搜索] %s: provider=%s, 原始=%s条, 处理后=%s条",
+                        dim['desc'],
+                        provider.name,
+                        len(response.results),
+                        len(prioritized_response.results),
+                    )
+                else:
+                    logger.warning(
+                        "[情报搜索] %s: %s 搜索失败 - %s",
+                        dim['desc'],
+                        provider.name,
+                        response.error_message,
+                    )
+
+                if prioritized_response.success and prioritized_response.results:
+                    if not prefer_chinese:
+                        break
+
+                    visible_preferred_count = min(
+                        preferred_count,
+                        len(prioritized_response.results),
+                    )
+                    if fallback_response is None:
+                        fallback_response = prioritized_response
+
+                    if visible_preferred_count > 0:
+                        found_preferred_response = True
+                        break
+
+                    logger.info(
+                        "[情报搜索] %s: %s 结果仍以英文为主，继续尝试下一引擎",
+                        dim['desc'],
+                        provider.name,
+                    )
+                    continue
+
+                if response.success:
+                    logger.info(
+                        "[情报搜索] %s: %s 过滤后无有效结果，继续尝试下一引擎",
+                        dim['desc'],
+                        provider.name,
+                    )
+
+            if prefer_chinese and fallback_response is not None and not found_preferred_response:
+                results[dim['name']] = fallback_response
+            elif had_provider_success and not selected_response.results:
+                results[dim['name']] = SearchResponse(
+                    query=dim['query'],
+                    results=[],
+                    provider="Filtered",
+                    success=True,
+                    error_message=None,
                 )
             else:
-                response = provider.search(
-                    dim['query'],
-                    max_results=provider_max_results,
-                    days=search_days,
-                )
-            if dim['strict_freshness']:
-                filtered_response = self._filter_news_response(
-                    response,
-                    search_days=search_days,
-                    max_results=target_per_dimension,
-                    log_scope=f"{stock_code}:{provider.name}:{dim['name']}",
-                )
-            else:
-                filtered_response = self._normalize_and_limit_response(
-                    response,
-                    max_results=target_per_dimension,
-                )
-            results[dim['name']] = filtered_response
+                results[dim['name']] = selected_response
             search_count += 1
-            
-            if response.success:
-                logger.info(
-                    "[情报搜索] %s: 原始=%s条, 过滤后=%s条",
-                    dim['desc'],
-                    len(response.results),
-                    len(filtered_response.results),
-                )
-            else:
-                logger.warning(f"[情报搜索] {dim['desc']}: 搜索失败 - {response.error_message}")
-            
+
             # 短暂延迟避免请求过快
             time.sleep(0.5)
         

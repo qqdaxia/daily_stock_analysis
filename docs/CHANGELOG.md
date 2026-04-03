@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
 - [修复] `search_stock_news()` 现在会把 `SHSE.600519`、`SZSE.000001`、`600519.XSHG`、`000001.XSHE` 等交易所限定的 A 股代码也识别为中文优先场景，避免英文股票名输入时再次落回海外资讯结果。
+- [修复] `search_comprehensive_intel()` 现在会在 A 股/中文优先场景下为 Brave 传递 `zh-hans/CN` locale，并在首个 provider 仅返回英文海外资讯时继续尝试后续 provider，避免报告里的“最新消息/机构分析”等情报维度再次被海外结果占满。
 - [修复] **MiniMax-M2.7 模型连接测试支持** — 修复 LLM 通道连接测试在 MiniMax-M2.7 模型下返回 "Empty response" 的问题；增加了 `max_tokens` 上限（8→256）以容纳 MiniMax 思考过程，并添加 `content_blocks` 格式解析逻辑统一处理 MiniMax 响应格式差异。
 - [修复] 移除 `HistoryItem` 与 `ReportSummary` 响应 Schema 中 `sentiment_score` 的 `ge=0/le=100` 约束（fixes #942）——历史库中存储的超范围负值或大于 100 的情绪评分不再触发 Pydantic ValidationError，历史列表与详情接口恢复正常返回。
 - [改进] Agent IntelAgent 新增公司公告搜索维度（上交所/深交所/cninfo）与主力资金流工具（get_capital_flow），修复 Agent 模式下公告和资金流数据经常缺失的问题
