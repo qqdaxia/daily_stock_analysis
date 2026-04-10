@@ -39,6 +39,94 @@ from src.services.task_queue import AnalysisTaskQueue
 
 
 class AnalysisApiContractTestCase(unittest.TestCase):
+    def test_get_analysis_status_completed_db_snapshot_preserves_zero_change_pct(self) -> None:
+        if get_analysis_status is None:
+            self.skipTest("analysis endpoint helpers unavailable in this environment")
+
+        mock_queue = MagicMock()
+        mock_queue.get_task.return_value = None
+        mock_db = MagicMock()
+        mock_db.get_analysis_history.return_value = [
+            SimpleNamespace(
+                id=1,
+                code="600519",
+                name="贵州茅台",
+                report_type="detailed",
+                raw_result={"report_language": "zh", "model_used": "test-model"},
+                context_snapshot={
+                    "enhanced_context": {
+                        "realtime": {
+                            "price": 1234.5,
+                            "change_pct": 0.0,
+                            "change_60d": 12.3,
+                        }
+                    },
+                    "realtime_quote_raw": {"price": 1234.5, "change_pct": 9.9},
+                },
+                sentiment_score=80,
+                operation_advice="持有",
+                trend_prediction="看多",
+                analysis_summary="summary",
+                ideal_buy=None,
+                secondary_buy=None,
+                stop_loss=None,
+                take_profit=None,
+                created_at=None,
+            )
+        ]
+
+        with patch("api.v1.endpoints.analysis.get_task_queue", return_value=mock_queue), \
+             patch("src.storage.DatabaseManager.get_instance", return_value=mock_db):
+            result = get_analysis_status("task-1")
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.result.report["meta"]["current_price"], 1234.5)
+        self.assertEqual(result.result.report["meta"]["change_pct"], 0.0)
+
+    def test_get_analysis_status_completed_db_snapshot_reads_change_pct_from_raw_when_price_present(self) -> None:
+        if get_analysis_status is None:
+            self.skipTest("analysis endpoint helpers unavailable in this environment")
+
+        mock_queue = MagicMock()
+        mock_queue.get_task.return_value = None
+        mock_db = MagicMock()
+        mock_db.get_analysis_history.return_value = [
+            SimpleNamespace(
+                id=2,
+                code="AAPL",
+                name="Apple",
+                report_type="detailed",
+                raw_result={"report_language": "en", "model_used": "test-model"},
+                context_snapshot={
+                    "enhanced_context": {
+                        "realtime": {
+                            "price": 180.35,
+                            "change_pct": None,
+                            "change_60d": None,
+                        }
+                    },
+                    "realtime_quote_raw": {"price": 180.35, "pct_chg": -1.25},
+                },
+                sentiment_score=72,
+                operation_advice="Hold",
+                trend_prediction="Neutral",
+                analysis_summary="summary",
+                ideal_buy=None,
+                secondary_buy=None,
+                stop_loss=None,
+                take_profit=None,
+                created_at=None,
+            )
+        ]
+
+        with patch("api.v1.endpoints.analysis.get_task_queue", return_value=mock_queue), \
+             patch("src.storage.DatabaseManager.get_instance", return_value=mock_db):
+            result = get_analysis_status("task-2")
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.result.report["meta"]["current_price"], 180.35)
+        self.assertEqual(result.result.report["meta"]["change_pct"], -1.25)
+
     def test_report_type_full_maps_to_full_pipeline_mode(self) -> None:
         service = object.__new__(AnalysisService)
         pipeline_instance = MagicMock()
