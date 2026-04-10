@@ -618,11 +618,16 @@ def get_analysis_status(task_id: str) -> TaskStatus:
                 enhanced_context = context_snapshot.get('enhanced_context') or {}
                 realtime = enhanced_context.get('realtime') or {}
                 current_price = realtime.get('price')
-                change_pct = realtime.get('change_pct') or realtime.get('change_60d')
+                change_pct = realtime.get('change_pct')
+                if change_pct is None:
+                    change_pct = realtime.get('change_60d')
                 if current_price is None:
                     realtime_quote_raw = context_snapshot.get('realtime_quote_raw') or {}
                     current_price = realtime_quote_raw.get('price')
-                    change_pct = change_pct or realtime_quote_raw.get('change_pct') or realtime_quote_raw.get('pct_chg')
+                    if change_pct is None:
+                        change_pct = realtime_quote_raw.get('change_pct')
+                    if change_pct is None:
+                        change_pct = realtime_quote_raw.get('pct_chg')
 
             # Build report from DB record so completed tasks return real data
             report_dict = AnalysisReport(

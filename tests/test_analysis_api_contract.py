@@ -3,6 +3,7 @@
 
 import asyncio
 from concurrent.futures import Future
+from datetime import datetime
 import json
 import tempfile
 import unittest
@@ -21,6 +22,7 @@ try:
         _handle_sync_analysis,
         _build_analysis_report,
         _load_sync_fundamental_sources,
+        get_analysis_status,
     )
 except Exception:  # pragma: no cover - optional dependency environments
     create_app = None
@@ -28,6 +30,7 @@ except Exception:  # pragma: no cover - optional dependency environments
     _handle_sync_analysis = None
     _build_analysis_report = None
     _load_sync_fundamental_sources = None
+    get_analysis_status = None
 
 from src.enums import ReportType
 from src.services.analysis_service import AnalysisService
@@ -349,6 +352,55 @@ class AnalysisApiContractTestCase(unittest.TestCase):
             query_id="q_sync_001",
             code="600519",
         )
+
+    def test_get_analysis_status_reads_price_fields_from_context_snapshot_preserving_zero_change_pct(self) -> None:
+        if get_analysis_status is None:
+            self.skipTest("analysis endpoint helpers unavailable in this environment")
+
+        record = SimpleNamespace(
+            id=1,
+            code="600519",
+            name="贵州茅台",
+            report_type="detailed",
+            created_at=datetime(2026, 4, 10, 12, 0, 0),
+            raw_result=json.dumps({"model_used": "test-model", "report_language": "zh"}),
+            context_snapshot=json.dumps(
+                {
+                    "enhanced_context": {
+                        "realtime": {
+                            "price": 1234.5,
+                            "change_pct": 0.0,
+                            "change_60d": 9.99,
+                        }
+                    },
+                    "realtime_quote_raw": {
+                        "price": 999.9,
+                        "change_pct": 8.88,
+                        "pct_chg": 7.77,
+                    },
+                }
+            ),
+            sentiment_score=80,
+            operation_advice="持有",
+            trend_prediction="震荡上行",
+            analysis_summary="summary",
+            ideal_buy=None,
+            secondary_buy=None,
+            stop_loss=None,
+            take_profit=None,
+        )
+        mock_db = MagicMock()
+        mock_db.get_analysis_history.return_value = [record]
+
+        with patch("api.v1.endpoints.analysis.get_task_queue") as queue_mock, \
+             patch("src.storage.DatabaseManager.get_instance", return_value=mock_db):
+            queue_mock.return_value.get_task.return_value = None
+            status = get_analysis_status("task_123")
+
+        self.assertEqual(status.status, "completed")
+        self.assertEqual(status.result.report["meta"]["current_price"], 1234.5)
+        self.assertEqual(status.result.report["meta"]["change_pct"], 0.0)
+        self.assertEqual(status.result.report["meta"]["model_used"], "test-model")
 
     def test_openapi_declares_single_and_batch_async_202_payloads(self) -> None:
         if create_app is None:
