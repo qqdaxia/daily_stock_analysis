@@ -331,6 +331,16 @@ describe('SettingsPage', () => {
     expect(screen.getByText('2026-03-29T02:15:30.000Z')).toBeInTheDocument();
   });
 
+  it('renders desktop app version in system settings during desktop runtime', async () => {
+    (window as { dsaDesktop?: unknown }).dsaDesktop = { version: '3.12.0' };
+
+    render(<SettingsPage />);
+
+    expect(await screen.findByRole('heading', { name: '版本信息' })).toBeInTheDocument();
+    expect(screen.getByText('桌面端版本')).toBeInTheDocument();
+    expect(screen.getByText('3.12.0')).toBeInTheDocument();
+  });
+
   it('falls back to build identifier when package version is still placeholder', () => {
     expect(resolveWebBuildInfo({
       packageVersion: '0.0.0',
@@ -500,7 +510,7 @@ describe('SettingsPage', () => {
   });
 
   it('renders desktop env backup actions in desktop runtime and exports saved env', async () => {
-    (window as { dsaDesktop?: unknown }).dsaDesktop = { version: '0.1.0' };
+    (window as { dsaDesktop?: unknown }).dsaDesktop = { version: '3.12.0' };
 
     render(<SettingsPage />);
 
@@ -514,7 +524,7 @@ describe('SettingsPage', () => {
   });
 
   it('asks for confirmation before importing when local drafts exist', async () => {
-    (window as { dsaDesktop?: unknown }).dsaDesktop = { version: '0.1.0' };
+    (window as { dsaDesktop?: unknown }).dsaDesktop = { version: '3.12.0' };
     useSystemConfigMock.mockReturnValue(buildSystemConfigState({ hasDirty: true, dirtyCount: 2 }));
 
     render(<SettingsPage />);
@@ -528,7 +538,7 @@ describe('SettingsPage', () => {
   });
 
   it('reloads config after successful desktop env import', async () => {
-    (window as { dsaDesktop?: unknown }).dsaDesktop = { version: '0.1.0' };
+    (window as { dsaDesktop?: unknown }).dsaDesktop = { version: '3.12.0' };
 
     const { container } = render(<SettingsPage />);
 
@@ -548,7 +558,7 @@ describe('SettingsPage', () => {
   });
 
   it('shows an error when desktop env import succeeds but reload fails', async () => {
-    (window as { dsaDesktop?: unknown }).dsaDesktop = { version: '0.1.0' };
+    (window as { dsaDesktop?: unknown }).dsaDesktop = { version: '3.12.0' };
     load.mockResolvedValue(false);
 
     const { container } = render(<SettingsPage />);

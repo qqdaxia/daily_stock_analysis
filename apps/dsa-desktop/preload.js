@@ -1,5 +1,6 @@
 const { contextBridge } = require('electron');
+const { version } = require('./package.json');
 
 contextBridge.exposeInMainWorld('dsaDesktop', {
-  version: '0.1.0',
+  version,
 });
