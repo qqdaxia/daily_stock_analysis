@@ -16,11 +16,19 @@
 
 > 🤖 基于 AI 大模型的 A股/港股/美股自选股智能分析系统，每日自动分析并推送「决策仪表盘」到企业微信/飞书/Telegram/Discord/Slack/邮箱
 
-[**功能特性**](#-功能特性) · [**快速开始**](#-快速开始) · [**推送效果**](#-推送效果) · [**完整指南**](docs/full-guide.md) · [**常见问题**](docs/FAQ.md) · [**更新日志**](docs/CHANGELOG.md)
+[**功能特性**](#-功能特性) · [**交流群**](#-交流群) · [**快速开始**](#-快速开始) · [**推送效果**](#-推送效果) · [**完整指南**](docs/full-guide.md) · [**常见问题**](docs/FAQ.md) · [**更新日志**](docs/CHANGELOG.md)
 
 简体中文 | [English](docs/README_EN.md) | [繁體中文](docs/README_CHT.md)
 
 </div>
+
+## 💬 交流群
+
+欢迎加入社区交流项目使用经验和技术话题，群内仅用于**项目交流**与**技术分享**，**禁止打广告和荐股**。
+
+- **Telegram**：<https://t.me/+1yyZAGuiiw8xYmQ9>
+- **微信群**：现有群已超过 200 人，可添加小助手 **_oox_xoo** 申请进群
+- **小红书**：欢迎关注后续进展 <https://www.xiaohongshu.com/user/profile/61594417000000000201fa68>
 
 ## 💖 赞助商 (Sponsors)
 <div align="center">

@@ -20,11 +20,19 @@ Analyze your watchlist daily → generate a decision dashboard → push to multi
 
 **Zero-cost deployment** · Runs on GitHub Actions · No server required
 
-[**Quick Start**](#-quick-start) · [**Key Features**](#-key-features) · [**Sample Output**](#-sample-output) · [**Full Guide**](./full-guide_EN.md) · [**FAQ**](./FAQ_EN.md) · [**Contributing**](./CONTRIBUTING_EN.md) · [**All Docs**](./INDEX_EN.md)
+[**Quick Start**](#-quick-start) · [**Community**](#-community) · [**Key Features**](#-key-features) · [**Sample Output**](#-sample-output) · [**Full Guide**](./full-guide_EN.md) · [**FAQ**](./FAQ_EN.md) · [**Contributing**](./CONTRIBUTING_EN.md) · [**All Docs**](./INDEX_EN.md)
 
 English | [简体中文](../README.md) | [繁體中文](README_CHT.md)
 
 </div>
+
+## 💬 Community
+
+Join the community to discuss project usage and share technical ideas. The groups are for **project discussion** and **technical sharing** only; **advertising and stock-picking promotion are not allowed**.
+
+- **Telegram**: <https://t.me/+1yyZAGuiiw8xYmQ9>
+- **WeChat groups**: Existing groups are already over 200 members. Add the assistant **_oox_xoo** for an invite
+- **Xiaohongshu**: Follow updates here <https://www.xiaohongshu.com/user/profile/61594417000000000201fa68>
 
 ## 💖 Sponsors
 
