@@ -1430,16 +1430,22 @@ class StockAnalysisPipeline:
         # dry-run 模式下，数据获取成功即视为成功
         if dry_run:
             # 检查哪些股票的最新可复用交易日数据已存在
-            success_count = sum(
-                1
-                for code in stock_codes
-                if self.db.has_today_data(
-                    code,
-                    self._resolve_resume_target_date(
-                        code, current_time=resume_reference_time
-                    ),
+            success_count = 0
+            use_agent_mode = self._should_use_agent_mode()
+            for code in stock_codes:
+                target_date = self._resolve_resume_target_date(
+                    code, current_time=resume_reference_time
                 )
-            )
+                candidate_codes = [code]
+                if use_agent_mode:
+                    normalized_code = canonical_stock_code(normalize_stock_code(code))
+                    if normalized_code and normalized_code != code:
+                        candidate_codes.insert(0, normalized_code)
+                if any(
+                    self.db.has_today_data(candidate_code, target_date)
+                    for candidate_code in candidate_codes
+                ):
+                    success_count += 1
             fail_count = len(stock_codes) - success_count
         else:
             success_count = len(results)

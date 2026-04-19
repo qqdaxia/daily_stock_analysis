@@ -34,6 +34,8 @@ class TestPipelinePrefetchBehavior(unittest.TestCase):
             single_stock_notify=False,
             report_type="simple",
             analysis_delay=0,
+            agent_mode=False,
+            agent_skills=[],
         )
         return pipeline
 
@@ -101,6 +103,43 @@ class TestPipelinePrefetchBehavior(unittest.TestCase):
         self.assertEqual(len({id(value) for value in task_reference_times}), 1)
         self.assertEqual(len({id(value) for value in stats_reference_times}), 1)
         self.assertIs(task_reference_times[0], stats_reference_times[0])
+
+    def test_run_dry_run_agent_mode_checks_normalized_code_first(self):
+        pipeline = self._build_pipeline(process_result=None)
+        pipeline.config.agent_mode = True
+        pipeline._resolve_resume_target_date = MagicMock(return_value=date(2026, 3, 27))
+        pipeline.db.has_today_data.side_effect = [True]
+
+        pipeline.run(
+            stock_codes=["SH600519"],
+            dry_run=True,
+            send_notification=False,
+        )
+
+        self.assertEqual(
+            pipeline.db.has_today_data.call_args_list,
+            [call("600519", date(2026, 3, 27))],
+        )
+
+    def test_run_dry_run_agent_mode_falls_back_to_original_code_for_legacy_rows(self):
+        pipeline = self._build_pipeline(process_result=None)
+        pipeline.config.agent_mode = True
+        pipeline._resolve_resume_target_date = MagicMock(return_value=date(2026, 3, 27))
+        pipeline.db.has_today_data.side_effect = [False, True]
+
+        pipeline.run(
+            stock_codes=["SH600519"],
+            dry_run=True,
+            send_notification=False,
+        )
+
+        self.assertEqual(
+            pipeline.db.has_today_data.call_args_list,
+            [
+                call("600519", date(2026, 3, 27)),
+                call("SH600519", date(2026, 3, 27)),
+            ],
+        )
 
 
 if __name__ == "__main__":
