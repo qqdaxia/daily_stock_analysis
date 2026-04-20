@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [修复] webui_frontend.py 在 static/index.html 存在但 static/assets/ 缺失时发出明确警告，避免用户因 CSS/JS 资源缺失导致页面元素异常变大却无从排查
 - [修复] `StockAnalysisPipeline` 搜索服务与社交舆情服务改为可选降级初始化：任一服务初始化异常时记录 warning 并以禁用状态继续运行，避免外部依赖抖动阻塞主分析链路与 SSE 进度回调。
 - [修复] Agent 历史 K 线读取改为 DB-first + 单次补抓 + 共享 fetcher：pipeline 会在 Agent 路径按 240 天历史覆盖度补齐并回写 `stock_daily`，`get_daily_history` / `analyze_trend` / `calculate_ma` / `get_volume_analysis` / `analyze_pattern` 后续优先复用数据库；Agent 模式下 `--dry-run` 也改为按同一“240 天历史缓存就绪”口径统计成功，减少同次分析内对东财接口的重复请求并避免汇总口径与真实可用性不一致（fixes #1066）
+- [修复] Agent 工具主路径复用 pipeline 冻结的 `target_date`：pipeline 在 `_analyze_with_agent` 内通过 `ContextVar` 将 Step 1 冻结出的交易日透传到 `data_tools` / `analysis_tools` 的 `load_recent_history_df` 调用，`runner._execute_tools` 的 ThreadPoolExecutor 现通过 `contextvars.copy_context().run(...)` 传播上下文，避免同一轮分析跨收盘边界时把刚补齐的历史误判为 stale 而重复补抓或返回空数据；同步新增 `_candidate_pick_cache` ContextVar 去重同次分析内的候选桶探测，内部将 `ensure_min_history_cached` 拆为 `_ensure_min_history_cached_with_bars` 并在 `load_recent_history_df` 复用命中结果以避免多一次 DB 读（fixes #1066 残余）
 - [文档] DEPLOY.md 和 deploy-webui-cloud.md 新增"UI 元素异常变大/布局错乱"排查步骤（重建 Docker 镜像或手动执行 npm run build）
 - [文档] 补充飞书 Webhook 配置说明：强调 `FEISHU_WEBHOOK_URL` 是群通知必填项、`FEISHU_WEBHOOK_SECRET` 与飞书机器人「签名校验」必须两端同时启用或同时关闭、`FEISHU_APP_SECRET` 仅用于应用/Stream Bot 模式不可替代 Webhook；同步完善英文指南并在 `.env.example` 为相关配置项补充内联说明注释
 

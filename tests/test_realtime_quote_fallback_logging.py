@@ -177,7 +177,11 @@ def test_pipeline_trend_lookup_normalizes_prefixed_stock_code():
     pipeline.db.get_data_range.side_effect = [[], []]
     pipeline._analyze_with_agent = MagicMock(return_value=None)
 
-    pipeline.analyze_stock("SH600519", ReportType.SIMPLE, "q1")
+    with patch(
+        "src.services.stock_history_cache.get_db",
+        return_value=pipeline.db,
+    ):
+        pipeline.analyze_stock("SH600519", ReportType.SIMPLE, "q1")
 
     first_call = pipeline.db.get_data_range.call_args_list[0]
     assert first_call.args[0] == "600519"
@@ -219,6 +223,9 @@ def test_pipeline_trend_lookup_prefers_more_complete_original_bucket():
     with patch(
         "src.core.pipeline.get_effective_trading_date",
         return_value=date(2026, 4, 16),
+    ), patch(
+        "src.services.stock_history_cache.get_db",
+        return_value=pipeline.db,
     ):
         pipeline.analyze_stock("SH600519", ReportType.SIMPLE, "q1")
 
@@ -259,6 +266,9 @@ def test_pipeline_trend_skips_stale_history_before_agent_context_injection():
     with patch(
         "src.core.pipeline.get_effective_trading_date",
         return_value=date(2026, 4, 16),
+    ), patch(
+        "src.services.stock_history_cache.get_db",
+        return_value=pipeline.db,
     ):
         pipeline.analyze_stock("SH600519", ReportType.SIMPLE, "q1")
 
@@ -306,7 +316,10 @@ def test_pipeline_trend_uses_frozen_time_to_keep_prefetched_history_fresh():
         StockAnalysisPipeline,
         "_resolve_resume_target_date",
         return_value=date(2026, 4, 16),
-    ) as mock_target:
+    ) as mock_target, patch(
+        "src.services.stock_history_cache.get_db",
+        return_value=pipeline.db,
+    ):
         pipeline.analyze_stock(
             "SH600519",
             ReportType.SIMPLE,
@@ -355,7 +368,10 @@ def test_pipeline_trend_defaults_to_runtime_target_date_without_frozen_time():
         StockAnalysisPipeline,
         "_resolve_resume_target_date",
         return_value=date(2026, 4, 16),
-    ) as mock_target:
+    ) as mock_target, patch(
+        "src.services.stock_history_cache.get_db",
+        return_value=pipeline.db,
+    ):
         pipeline.analyze_stock("SH600519", ReportType.SIMPLE, "q1")
 
     pipeline.trend_analyzer.analyze.assert_called_once()
