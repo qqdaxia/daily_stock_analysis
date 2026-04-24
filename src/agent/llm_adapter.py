@@ -23,6 +23,7 @@ from src.config import (
     get_configured_llm_models,
     get_effective_agent_models_to_try,
     get_effective_agent_primary_model,
+    normalize_litellm_temperature,
 )
 
 logger = logging.getLogger(__name__)
@@ -382,7 +383,10 @@ class LLMToolAdapter:
         call_kwargs: Dict[str, Any] = {
             "model": model,
             "messages": openai_messages,
-            "temperature": self._get_temperature(model) if temperature is None else temperature,
+            "temperature": normalize_litellm_temperature(
+                model,
+                self._get_temperature(model) if temperature is None else temperature,
+            ),
         }
         if max_tokens is not None:
             call_kwargs["max_tokens"] = max_tokens
@@ -420,7 +424,7 @@ class LLMToolAdapter:
 
     def _get_temperature(self, model: str) -> float:
         """Return unified temperature from config."""
-        return self._config.llm_temperature
+        return normalize_litellm_temperature(model, self._config.llm_temperature)
 
     def _convert_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Convert internal message format to OpenAI-compatible format for litellm."""

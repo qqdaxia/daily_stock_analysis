@@ -50,6 +50,9 @@ class ConfigIssue:
 _MANAGED_LITELLM_KEY_PROVIDERS = {"gemini", "vertex_ai", "anthropic", "openai", "deepseek"}
 SUPPORTED_LLM_CHANNEL_PROTOCOLS = ("openai", "anthropic", "gemini", "vertex_ai", "deepseek", "ollama")
 _FALSEY_ENV_VALUES = {"0", "false", "no", "off"}
+_FIXED_TEMPERATURE_LITELLM_MODELS: Dict[str, float] = {
+    "kimi-k2.6": 1.0,
+}
 AGENT_MAX_STEPS_DEFAULT = 10
 NEWS_STRATEGY_WINDOWS: Dict[str, int] = {
     "ultra_short": 1,
@@ -292,12 +295,34 @@ def get_configured_llm_models(model_list: List[Dict[str, Any]]) -> List[str]:
     return models
 
 
+def get_fixed_litellm_temperature(model: str) -> Optional[float]:
+    """Return a provider-mandated temperature for known strict models."""
+    normalized_model = (model or "").strip().lower()
+    if not normalized_model:
+        return None
+    model_parts = [part for part in re.split(r"[/:\s]+", normalized_model) if part]
+    for model_name, temperature in _FIXED_TEMPERATURE_LITELLM_MODELS.items():
+        if any(part == model_name or part.startswith(f"{model_name}-") for part in model_parts):
+            return temperature
+    return None
+
+
+def normalize_litellm_temperature(model: str, temperature: Optional[float], *, default: float = 0.7) -> float:
+    """Normalize temperature before sending a LiteLLM request."""
+    fixed_temperature = get_fixed_litellm_temperature(model)
+    if fixed_temperature is not None:
+        return fixed_temperature
+    if temperature is None:
+        return default
+    return float(temperature)
+
+
 def resolve_unified_llm_temperature(model: str) -> float:
     """Resolve the unified LLM temperature with backward-compatible fallbacks."""
     llm_temperature_raw = os.getenv("LLM_TEMPERATURE")
     if llm_temperature_raw and llm_temperature_raw.strip():
         try:
-            return float(llm_temperature_raw)
+            return normalize_litellm_temperature(model, float(llm_temperature_raw))
         except (ValueError, TypeError):
             pass
 
@@ -313,7 +338,7 @@ def resolve_unified_llm_temperature(model: str) -> float:
         preferred_value = os.getenv(preferred_env)
         if preferred_value and preferred_value.strip():
             try:
-                return float(preferred_value)
+                return normalize_litellm_temperature(model, float(preferred_value))
             except (ValueError, TypeError):
                 pass
 
@@ -321,11 +346,11 @@ def resolve_unified_llm_temperature(model: str) -> float:
         env_value = os.getenv(env_name)
         if env_value and env_value.strip():
             try:
-                return float(env_value)
+                return normalize_litellm_temperature(model, float(env_value))
             except (ValueError, TypeError):
                 continue
 
-    return 0.7
+    return normalize_litellm_temperature(model, 0.7)
 
 
 def _get_litellm_provider(model: str) -> str:
