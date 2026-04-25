@@ -105,6 +105,21 @@ class TestEfinanceMainIndices(unittest.TestCase):
         self.assertEqual(breaker.failures[0][0], "efinance")
         self.assertIn("code", str(breaker.failures[0][1]))
 
+    def test_get_hot_stocks_records_circuit_breaker_failure_on_schema_drift(self):
+        fetcher = EfinanceFetcher()
+        breaker = _DummyCircuitBreaker()
+        malformed_df = pd.DataFrame({"pct_chg": [9.9], "amount": [1_000_000.0]})
+
+        with patch("data_provider.efinance_fetcher.get_realtime_circuit_breaker", return_value=breaker):
+            with patch.object(fetcher, "_get_stock_realtime_dataframe", return_value=malformed_df):
+                hot_stocks = fetcher.get_hot_stocks()
+
+        self.assertIsNone(hot_stocks)
+        self.assertEqual(len(breaker.failures), 1)
+        self.assertEqual(breaker.failures[0][0], "efinance")
+        self.assertIn("hot_stocks schema missing required columns", str(breaker.failures[0][1]))
+        self.assertIn("code", str(breaker.failures[0][1]))
+
 
 if __name__ == "__main__":
     unittest.main()

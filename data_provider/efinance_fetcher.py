@@ -932,6 +932,8 @@ class EfinanceFetcher(BaseFetcher):
 
     def get_hot_stocks(self, n: int = 5) -> Optional[List[Dict[str, Any]]]:
         """基于 efinance 全市场实时行情构建热门股票榜。"""
+        circuit_breaker = get_realtime_circuit_breaker()
+        source_key = "efinance"
         df = self._get_stock_realtime_dataframe()
         if df is None or df.empty:
             return None
@@ -944,6 +946,13 @@ class EfinanceFetcher(BaseFetcher):
 
         required_cols = [code_col, name_col, pct_col, amt_col]
         if any(col not in df.columns for col in required_cols):
+            missing_cols = [col for col in required_cols if col not in df.columns]
+            error_message = (
+                "hot_stocks schema missing required columns: "
+                + ", ".join(missing_cols)
+            )
+            logger.info(f"[API错误] 解析热门股票(efinance)失败: {error_message}")
+            circuit_breaker.record_failure(source_key, error_message)
             return None
 
         work_df = df[required_cols + ([turn_col] if turn_col in df.columns else [])].copy()
