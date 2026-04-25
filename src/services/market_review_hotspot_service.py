@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Dict, List, Optional
 
 from data_provider import DataFetcherManager
@@ -106,16 +107,15 @@ class MarketReviewHotspotService:
 
     @staticmethod
     def _format_change(value: Any) -> str:
-        try:
-            return f"{float(value):+.2f}%"
-        except (TypeError, ValueError):
+        numeric_value = MarketReviewHotspotService._safe_float(value)
+        if numeric_value is None:
             return "N/A"
+        return f"{numeric_value:+.2f}%"
 
     @staticmethod
     def _format_amount(value: Any, language: str) -> str:
-        try:
-            amount = float(value)
-        except (TypeError, ValueError):
+        amount = MarketReviewHotspotService._safe_float(value)
+        if amount is None:
             return "N/A"
 
         if language == "en":
@@ -134,6 +134,9 @@ class MarketReviewHotspotService:
     @staticmethod
     def _safe_float(value: Any) -> Optional[float]:
         try:
-            return float(value)
+            numeric_value = float(value)
         except (TypeError, ValueError):
             return None
+        if not math.isfinite(numeric_value):
+            return None
+        return numeric_value

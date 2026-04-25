@@ -92,3 +92,25 @@ class MarketReviewHotspotServiceTestCase(unittest.TestCase):
 
         self.assertIn("中际旭创 (300308)", markdown)
         self.assertNotIn("换手率", markdown)
+
+    def test_build_markdown_treats_nan_like_missing_numeric_field(self) -> None:
+        service = MarketReviewHotspotService(
+            manager=_StubManager(
+                stocks=[
+                    {
+                        "code": "300308",
+                        "name": "中际旭创",
+                        "change_pct": float("nan"),
+                        "amount": float("nan"),
+                        "turnover_rate": float("nan"),
+                    }
+                ]
+            )
+        )
+
+        markdown = service.build_markdown(region="cn", language="zh")
+
+        self.assertIn("中际旭创 (300308)", markdown)
+        self.assertIn(": N/A, 成交额 N/A", markdown)
+        self.assertNotIn("换手率", markdown)
+        self.assertNotIn("nan", markdown.lower())

@@ -177,3 +177,17 @@ def test_em_realtime_dataframe_fast_fails_when_circuit_breaker_open(monkeypatch,
 
     assert df is not None
     assert df.empty
+
+
+def test_hot_stocks_skips_full_market_request_when_circuit_breaker_open(monkeypatch, akshare_fetcher):
+    breaker = _DummyCircuitBreaker(available=False)
+    monkeypatch.setattr("data_provider.akshare_fetcher.get_realtime_circuit_breaker", lambda: breaker)
+
+    def _unexpected_call():
+        raise AssertionError("ak.stock_zh_a_spot_em should not be called when breaker is open")
+
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(stock_zh_a_spot_em=_unexpected_call))
+
+    hot_stocks = akshare_fetcher.get_hot_stocks()
+
+    assert hot_stocks is None
