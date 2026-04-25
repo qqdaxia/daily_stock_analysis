@@ -73,6 +73,7 @@ export interface SystemConfigResponse {
   maskToken: string;
   items: SystemConfigItem[];
   updatedAt?: string;
+  setupStatus: SetupWizardStatus;
 }
 
 export interface ExportSystemConfigResponse {
@@ -135,15 +136,43 @@ export interface TestLLMChannelRequest {
   models: string[];
   enabled?: boolean;
   timeoutSeconds?: number;
+  maskToken?: string;
+}
+
+export interface SetupWizardCheck {
+  key: string;
+  title: string;
+  category: string;
+  required: boolean;
+  status: 'configured' | 'needs_action' | 'optional' | 'inherited' | 'warning';
+  message: string;
+  nextAction?: string | null;
+}
+
+export interface SetupWizardStatus {
+  isComplete: boolean;
+  readyForSmoke: boolean;
+  requiredMissingKeys: string[];
+  nextStepKey?: string | null;
+  checks: SetupWizardCheck[];
+}
+
+export interface LLMTestStage {
+  key: string;
+  title: string;
+  status: 'pending' | 'running' | 'success' | 'failed' | 'skipped';
+  detail: string;
 }
 
 export interface TestLLMChannelResponse {
   success: boolean;
   message: string;
   error?: string | null;
-  resolvedProtocol?: string | null;
+  errorType?: string | null;
   resolvedModel?: string | null;
   latencyMs?: number | null;
+  nextStep?: string | null;
+  stages: LLMTestStage[];
 }
 
 export interface DiscoverLLMChannelModelsRequest {
@@ -162,6 +191,20 @@ export interface DiscoverLLMChannelModelsResponse {
   resolvedProtocol?: string | null;
   models: string[];
   latencyMs?: number | null;
+}
+
+export interface SetupSmokeRunRequest {
+  stockInput?: string;
+}
+
+export interface SetupSmokeRunResponse {
+  success: boolean;
+  message: string;
+  errorCode?: string | null;
+  nextStep?: string | null;
+  resolvedStockCode?: string | null;
+  summary?: string | null;
+  setupStatus: SetupWizardStatus;
 }
 
 export interface SystemConfigValidationErrorResponse {

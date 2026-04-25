@@ -6,6 +6,8 @@ import type {
   DiscoverLLMChannelModelsResponse,
   ExportSystemConfigResponse,
   ImportSystemConfigRequest,
+  SetupSmokeRunRequest,
+  SetupSmokeRunResponse,
   SystemConfigConflictResponse,
   SystemConfigResponse,
   SystemConfigSchemaResponse,
@@ -92,6 +94,7 @@ function toSnakeTestChannelPayload(payload: TestLLMChannelRequest): Record<strin
     models: payload.models,
     enabled: payload.enabled ?? true,
     timeout_seconds: payload.timeoutSeconds ?? 20,
+    mask_token: payload.maskToken ?? '******',
   };
 }
 
@@ -103,6 +106,12 @@ function toSnakeDiscoverModelsPayload(payload: DiscoverLLMChannelModelsRequest):
     api_key: payload.apiKey ?? '',
     models: payload.models,
     timeout_seconds: payload.timeoutSeconds ?? 20,
+  };
+}
+
+function toSnakeSetupSmokePayload(payload: SetupSmokeRunRequest): Record<string, unknown> {
+  return {
+    stock_input: payload.stockInput ?? '',
   };
 }
 
@@ -156,6 +165,14 @@ export const systemConfigApi = {
       toSnakeDiscoverModelsPayload(payload),
     );
     return toCamelCase<DiscoverLLMChannelModelsResponse>(response.data);
+  },
+
+  async runSetupSmoke(payload: SetupSmokeRunRequest): Promise<SetupSmokeRunResponse> {
+    const response = await apiClient.post<Record<string, unknown>>(
+      '/api/v1/system/config/setup/smoke-run',
+      toSnakeSetupSmokePayload(payload),
+    );
+    return toCamelCase<SetupSmokeRunResponse>(response.data);
   },
 
   async update(payload: UpdateSystemConfigRequest): Promise<UpdateSystemConfigResponse> {

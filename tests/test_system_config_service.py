@@ -49,14 +49,60 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.manager = ConfigManager(env_path=self.env_path)
         self.service = SystemConfigService(manager=self.manager)
 
-    def test_get_config_returns_raw_sensitive_values(self) -> None:
+    def test_get_config_masks_sensitive_values_and_keeps_presence_flag(self) -> None:
         payload = self.service.get_config(include_schema=True)
         items = {item["key"]: item for item in payload["items"]}
 
         self.assertIn("GEMINI_API_KEY", items)
-        self.assertEqual(items["GEMINI_API_KEY"]["value"], "secret-key-value")
-        self.assertFalse(items["GEMINI_API_KEY"]["is_masked"])
+        self.assertEqual(items["GEMINI_API_KEY"]["value"], "******")
+        self.assertTrue(items["GEMINI_API_KEY"]["is_masked"])
         self.assertTrue(items["GEMINI_API_KEY"]["raw_value_exists"])
+        self.assertIn("setup_status", payload)
+
+    @patch("litellm.completion")
+    def test_test_llm_channel_resolves_masked_saved_api_key(self, mock_completion) -> None:
+        self._rewrite_env(
+            "LLM_CHANNELS=primary",
+            "LLM_PRIMARY_PROTOCOL=openai",
+            "LLM_PRIMARY_BASE_URL=https://api.example.com/v1",
+            "LLM_PRIMARY_API_KEY=persisted-secret",
+            "LLM_PRIMARY_MODELS=gpt-4o-mini",
+        )
+        mock_completion.return_value = Mock(
+            choices=[Mock(message=Mock(content="OK", content_blocks=None), content_blocks=None)]
+        )
+
+        result = self.service.test_llm_channel(
+            name="primary",
+            protocol="openai",
+            base_url="https://api.example.com/v1",
+            api_key="******",
+            models=["gpt-4o-mini"],
+            mask_token="******",
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(mock_completion.call_args.kwargs["api_key"], "persisted-secret")
+
+    @patch("src.core.pipeline.StockAnalysisPipeline")
+    def test_run_setup_smoke_runs_dry_run_without_formal_report(self, mock_pipeline_cls) -> None:
+        self._rewrite_env(
+            "STOCK_LIST=600519",
+            "GEMINI_API_KEY=secret-key-value",
+            "LITELLM_MODEL=gemini/gemini-2.5-flash",
+            f"DATABASE_PATH={self.temp_dir.name}/setup-smoke.db",
+        )
+        mock_pipeline = mock_pipeline_cls.return_value
+        mock_pipeline.run.return_value = [Mock(success=True)]
+
+        result = self.service.run_setup_smoke()
+
+        self.assertTrue(result["success"])
+        mock_pipeline.run.assert_called_once_with(
+            stock_codes=["600519"],
+            dry_run=True,
+            send_notification=False,
+        )
 
     def test_export_desktop_env_returns_raw_text(self) -> None:
         self.env_path.write_text(
@@ -607,7 +653,6 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         )
 
         self.assertTrue(payload["success"])
-        self.assertEqual(payload["resolved_protocol"], "openai")
         self.assertEqual(payload["resolved_model"], "openai/deepseek-chat")
 
     @patch("litellm.completion")
@@ -629,7 +674,6 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         )
 
         self.assertTrue(payload["success"])
-        self.assertEqual(payload["resolved_protocol"], "ollama")
         self.assertEqual(payload["resolved_model"], "ollama/llama3")
 
     @patch("src.services.system_config_service.requests.get")

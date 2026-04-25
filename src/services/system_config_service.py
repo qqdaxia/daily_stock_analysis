@@ -7,12 +7,15 @@ import io
 import logging
 import json
 import re
+import sqlite3
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import requests
 
+from data_provider.base import canonical_stock_code
 from src.config import (
     SUPPORTED_LLM_CHANNEL_PROTOCOLS,
     Config,
@@ -36,6 +39,7 @@ from src.core.config_registry import (
     get_field_definition,
     get_registered_field_keys,
 )
+from src.services.name_to_code_resolver import resolve_name_to_code
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +89,26 @@ class SystemConfigService:
     def get_schema(self) -> Dict[str, Any]:
         """Return grouped schema metadata for UI rendering."""
         return build_schema_response()
+
+    @staticmethod
+    def _mask_sensitive_value(
+        *,
+        key: str,
+        value: str,
+        field_schema: Dict[str, Any],
+        mask_token: str,
+    ) -> Tuple[str, bool]:
+        if not value:
+            return value, False
+        if not bool(field_schema.get("is_sensitive", False)):
+            return value, False
+        return mask_token, True
+
+    @staticmethod
+    def _load_runtime_config() -> Config:
+        Config.reset_instance()
+        setup_env(override=True)
+        return Config.get_instance()
 
     @staticmethod
     def _reload_runtime_singletons() -> None:
@@ -152,7 +176,7 @@ class SystemConfigService:
         return display_map
 
     def get_config(self, include_schema: bool = True, mask_token: str = "******") -> Dict[str, Any]:
-        """Return current config values without server-side secret masking."""
+        """Return current config values with secret masking and setup status."""
         config_map = self._build_display_config_map(self._manager.read_config_map())
         registered_keys = set(get_registered_field_keys())
         all_keys = set(config_map.keys()) | registered_keys
@@ -171,11 +195,17 @@ class SystemConfigService:
         for key in all_keys:
             raw_value = config_map.get(key, "")
             field_schema = schema_by_key[key]
+            display_value, is_masked = self._mask_sensitive_value(
+                key=key,
+                value=raw_value,
+                field_schema=field_schema,
+                mask_token=mask_token,
+            )
             item: Dict[str, Any] = {
                 "key": key,
-                "value": raw_value,
+                "value": display_value,
                 "raw_value_exists": bool(raw_value),
-                "is_masked": False,
+                "is_masked": is_masked,
             }
             if include_schema:
                 item["schema"] = field_schema
@@ -194,6 +224,7 @@ class SystemConfigService:
             "mask_token": mask_token,
             "items": items,
             "updated_at": self._manager.get_updated_at(),
+            "setup_status": self.get_setup_status(),
         }
 
     def validate(self, items: Sequence[Dict[str, str]], mask_token: str = "******") -> Dict[str, Any]:
@@ -204,6 +235,77 @@ class SystemConfigService:
             "valid": valid,
             "issues": issues,
         }
+
+    def get_setup_status(self) -> Dict[str, Any]:
+        """Return the first-run setup completion status for the current config."""
+        effective_map = self._manager.read_config_map()
+        runtime_config = self._load_runtime_config()
+
+        llm_check = self._build_primary_llm_check(runtime_config=runtime_config)
+        agent_check = self._build_agent_llm_check(effective_map=effective_map, runtime_config=runtime_config, llm_check=llm_check)
+        stock_check = self._build_stock_list_check(runtime_config=runtime_config)
+        notification_check = self._build_notification_check(runtime_config=runtime_config)
+        storage_check = self._build_storage_check(runtime_config=runtime_config)
+
+        checks = [
+            llm_check,
+            agent_check,
+            stock_check,
+            notification_check,
+            storage_check,
+        ]
+        required_missing = [
+            check["key"]
+            for check in checks
+            if check["required"] and check["status"] not in {"configured", "inherited"}
+        ]
+        next_step = required_missing[0] if required_missing else None
+        return {
+            "is_complete": not required_missing,
+            "ready_for_smoke": not {"llm_primary", "stock_list", "storage"} & set(required_missing),
+            "required_missing_keys": required_missing,
+            "next_step_key": next_step,
+            "checks": checks,
+        }
+
+    def run_setup_smoke(self, stock_input: str = "") -> Dict[str, Any]:
+        """Run a low-risk first-run smoke check without generating a formal report."""
+        setup_status = self.get_setup_status()
+        if not setup_status["ready_for_smoke"]:
+            missing_labels = [
+                check["title"]
+                for check in setup_status["checks"]
+                if check["key"] in set(setup_status["required_missing_keys"])
+            ]
+            return self._smoke_payload(False, "基础配置尚未满足试跑条件", error_code="setup_incomplete", next_step="请先补齐 LLM、自选股或本地存储配置", resolved_stock_code=None, summary=f"仍缺少：{'、'.join(missing_labels)}", setup_status=setup_status)
+
+        runtime_config = self._load_runtime_config()
+        stock_candidate = (stock_input or "").strip()
+        if not stock_candidate:
+            stock_candidate = (runtime_config.stock_list[0] if runtime_config.stock_list else "").strip()
+
+        resolved_stock_code, resolved_stock_name = self._resolve_setup_stock(stock_candidate)
+        if not resolved_stock_code:
+            return self._smoke_payload(False, "无法解析试跑股票", error_code="stock_not_found", next_step="请在设置页先保存 1-3 只可识别的股票代码或名称", resolved_stock_code=None, summary=f"输入“{stock_candidate or '空值'}”未匹配到有效股票", setup_status=setup_status)
+
+        from src.core.pipeline import StockAnalysisPipeline
+
+        pipeline = StockAnalysisPipeline(
+            config=runtime_config,
+            query_id="setup-smoke",
+            query_source="setup_wizard",
+        )
+        results = pipeline.run(
+            stock_codes=[resolved_stock_code],
+            dry_run=True,
+            send_notification=False,
+        )
+        result = results[0] if results else None
+        if result and getattr(result, "success", False):
+            return self._smoke_payload(True, "首次试跑通过", error_code=None, next_step="现在可以回到首页发起正式分析", resolved_stock_code=resolved_stock_code, summary=f"已完成 {resolved_stock_code} 的轻量数据抓取校验，未生成正式报告。", setup_status=setup_status)
+
+        error_message = getattr(result, "error_message", None) or "轻量试跑失败，请检查数据源或股票代码配置"
+        return self._smoke_payload(False, "首次试跑失败", error_code="dry_run_failed", next_step="请确认股票代码可用、网络可访问并重新试跑", resolved_stock_code=resolved_stock_code, summary=error_message, setup_status=setup_status)
 
     def export_desktop_env(self) -> Dict[str, Any]:
         """Return the raw active `.env` content for desktop-only backup."""
@@ -247,7 +349,7 @@ class SystemConfigService:
         api_key: str,
         models: Sequence[str] = (),
         timeout_seconds: float = 20.0,
-        ) -> Dict[str, Any]:
+    ) -> Dict[str, Any]:
         """Discover available models from an OpenAI-compatible `/models` endpoint."""
         channel_name = name.strip() or "channel"
         existing_models = [str(m).strip() for m in models if str(m).strip()]
@@ -381,10 +483,22 @@ class SystemConfigService:
         models: Sequence[str],
         enabled: bool = True,
         timeout_seconds: float = 20.0,
+        mask_token: str = "******",
     ) -> Dict[str, Any]:
         """Run a minimal completion call against one channel definition."""
         raw_models = [str(model).strip() for model in models if str(model).strip()]
         channel_name = name.strip() or "channel"
+        api_key = self._resolve_request_api_key(
+            channel_name=channel_name,
+            api_key=api_key,
+            mask_token=mask_token,
+        )
+        stages = [
+            self._stage("validation", "配置校验", "running", "正在检查渠道定义"),
+            self._stage("model_discovery", "模型发现", "pending", "尚未开始"),
+            self._stage("chat", "聊天接口", "pending", "尚未开始"),
+            self._stage("response_parse", "响应解析", "pending", "尚未开始"),
+        ]
         validation_issues = self._validate_llm_channel_definition(
             channel_name=channel_name,
             protocol_value=protocol,
@@ -397,14 +511,9 @@ class SystemConfigService:
         )
         errors = [issue for issue in validation_issues if issue["severity"] == "error"]
         if errors:
-            return {
-                "success": False,
-                "message": "LLM channel configuration is invalid",
-                "error": errors[0]["message"],
-                "resolved_protocol": None,
-                "resolved_model": None,
-                "latency_ms": None,
-            }
+            stages[0] = self._stage("validation", "配置校验", "failed", errors[0]["message"])
+            return self._llm_test_payload(False, "LLM channel configuration is invalid", error=errors[0]["message"], error_type="invalid_config", resolved_model=None, latency_ms=None, next_step="请先补全渠道的 API Key、协议和模型配置", stages=stages)
+        stages[0] = self._stage("validation", "配置校验", "success", "渠道配置格式有效")
 
         resolved_protocol = resolve_llm_channel_protocol(protocol, base_url=base_url, models=raw_models, channel_name=name)
         resolved_models = [normalize_llm_channel_model(model, resolved_protocol, base_url) for model in raw_models]
@@ -412,11 +521,13 @@ class SystemConfigService:
         api_keys = [segment.strip() for segment in api_key.split(",") if segment.strip()]
         selected_api_key = api_keys[0] if api_keys else ""
 
+        stages[1] = self._stage("model_discovery", "模型发现", "success", f"将使用已配置模型 {resolved_model} 进行连通性测试")
+
         call_kwargs: Dict[str, Any] = {
             "model": resolved_model,
             "messages": [{"role": "user", "content": "Reply with OK"}],
             "temperature": 0,
-            "max_tokens": 256,  # Increased to allow MiniMax-M2.7 thinking process + response
+            "max_tokens": 256,
             "timeout": max(5.0, float(timeout_seconds)),
         }
         if selected_api_key:
@@ -428,28 +539,17 @@ class SystemConfigService:
             import litellm
             from src.agent.llm_adapter import LLMToolAdapter
 
-            # Register custom model pricing for MiniMax models not in LiteLLM's built-in list
-            # This must be done before litellm.completion() to prevent cost calculation errors
-            # Reuses the registration logic from LLMToolAdapter to avoid code duplication
             LLMToolAdapter._register_custom_model_pricing()
 
             started_at = time.perf_counter()
             response = litellm.completion(**call_kwargs)
             latency_ms = int((time.perf_counter() - started_at) * 1000)
+            stages[2] = self._stage("chat", "聊天接口", "success", f"接口返回成功{f'，耗时 {latency_ms} ms' if latency_ms else ''}")
             content = ""
             if response and getattr(response, "choices", None):
                 choice = response.choices[0]
-                # MiniMax-M2.7 uses content_blocks format directly on choice (not inside message)
-                # Check both possible locations for content_blocks
-                content_blocks = None
-                if hasattr(choice, "content_blocks"):
-                    content_blocks = choice.content_blocks
-                elif hasattr(choice.message, "content_blocks"):
-                    content_blocks = choice.message.content_blocks
-
+                content_blocks = getattr(choice, "content_blocks", None) or getattr(getattr(choice, "message", None), "content_blocks", None)
                 if content_blocks:
-                    # MiniMax response format: concatenate ALL text blocks
-                    # Handle both type=="text" with .text and .content fields
                     text_parts = []
                     for block in content_blocks:
                         if getattr(block, "type", None) == "text":
@@ -460,39 +560,22 @@ class SystemConfigService:
                             text_parts.append(block.content)
                     content = "".join(text_parts).strip()
                 else:
-                    # Standard OpenAI format
                     message = getattr(choice, "message", None)
                     if message:
                         content = str(message.content or "").strip()
 
             if not content:
-                return {
-                    "success": False,
-                    "message": "LLM channel returned an empty response",
-                    "error": "Empty response",
-                    "resolved_protocol": resolved_protocol or None,
-                    "resolved_model": resolved_model,
-                    "latency_ms": latency_ms,
-                }
-
-            return {
-                "success": True,
-                "message": "LLM channel test succeeded",
-                "error": None,
-                "resolved_protocol": resolved_protocol or None,
-                "resolved_model": resolved_model,
-                "latency_ms": latency_ms,
-            }
+                stages[3] = self._stage("response_parse", "响应解析", "failed", "返回内容为空，无法确认模型输出")
+                return self._llm_test_payload(False, "LLM channel returned an empty response", error="Empty response", error_type="empty_response", resolved_model=resolved_model, latency_ms=latency_ms, next_step="请检查模型权限、额度或切换到另一个可用模型后重试", stages=stages)
+            stages[3] = self._stage("response_parse", "响应解析", "success", "已成功解析模型返回内容")
+            return self._llm_test_payload(True, "LLM channel test succeeded", error=None, error_type=None, resolved_model=resolved_model, latency_ms=latency_ms, next_step=None, stages=stages)
         except Exception as exc:
-            logger.warning("LLM channel test failed for %s: %s", channel_name, exc)
-            return {
-                "success": False,
-                "message": "LLM channel test failed",
-                "error": str(exc),
-                "resolved_protocol": resolved_protocol or None,
-                "resolved_model": resolved_model,
-                "latency_ms": None,
-            }
+            sanitized_error = self._sanitize_error_text(str(exc), secrets=[selected_api_key])
+            error_type = self._classify_llm_error(sanitized_error)
+            logger.warning("LLM channel test failed for %s: %s", channel_name, sanitized_error)
+            stages[2] = self._stage("chat", "聊天接口", "failed", sanitized_error)
+            stages[3] = self._stage("response_parse", "响应解析", "skipped", "接口请求未完成，未进入解析阶段")
+            return self._llm_test_payload(False, "LLM channel test failed", error=sanitized_error, error_type=error_type, resolved_model=resolved_model, latency_ms=None, next_step=self._suggest_llm_next_step(error_type), stages=stages)
 
     def update(
         self,
@@ -703,6 +786,130 @@ class SystemConfigService:
 
         issues.extend(self._validate_cross_field(effective_map=effective_map, updated_keys=set(updated_map.keys())))
         return issues
+
+    def _resolve_request_api_key(self, *, channel_name: str, api_key: str, mask_token: str) -> str:
+        if api_key != mask_token:
+            return api_key
+        current_map = self._manager.read_config_map()
+        prefix = f"LLM_{channel_name.upper()}"
+        return (current_map.get(f"{prefix}_API_KEYS") or "").strip() or (current_map.get(f"{prefix}_API_KEY") or "").strip() or api_key
+
+    @staticmethod
+    def _sanitize_error_text(text: str, secrets: Sequence[str]) -> str:
+        sanitized = text or ""
+        for secret in secrets:
+            if secret:
+                sanitized = sanitized.replace(secret, "******")
+        sanitized = re.sub(r"Bearer\s+[A-Za-z0-9._\-]+", "Bearer ******", sanitized, flags=re.IGNORECASE)
+        return sanitized
+
+    @staticmethod
+    def _classify_llm_error(message: str, status_code: Optional[int] = None) -> str:
+        lowered = (message or "").lower()
+        if status_code in {401, 403} or "unauthorized" in lowered or "invalid api key" in lowered or "authentication" in lowered: return "auth_error"
+        if status_code == 404 or "not found" in lowered or "does not exist" in lowered or "unknown model" in lowered: return "model_not_found"
+        if "timeout" in lowered or "timed out" in lowered: return "timeout"
+        if "empty response" in lowered: return "empty_response"
+        if "json" in lowered or "parse" in lowered or "schema" in lowered: return "response_parse_error"
+        if status_code and status_code >= 400: return "api_error"
+        return "network_error"
+
+    @staticmethod
+    def _suggest_llm_next_step(error_type: str) -> str:
+        suggestions = {"invalid_config": "请先补全渠道配置并保存后再测试", "auth_error": "请检查 API Key 是否正确、是否有额度，或更换可用账号后重试", "timeout": "请检查网络连通性、代理或 Base URL 是否可访问", "model_not_found": "请确认模型名拼写正确，或先通过“获取模型”重新选择可用模型", "empty_response": "请切换到另一个模型，或确认当前模型支持聊天接口", "response_parse_error": "请确认该渠道兼容 OpenAI Chat 接口返回格式", "api_error": "请根据返回错误检查渠道权限、地域限制或请求参数", "network_error": "请检查 Base URL、网络连接或本地服务是否已启动"}
+        return suggestions.get(error_type, "请检查渠道配置后重试")
+
+    @staticmethod
+    def _setup_check(key: str, title: str, category: str, required: bool, status: str, message: str, next_action: Optional[str] = None) -> Dict[str, Any]:
+        return {"key": key, "title": title, "category": category, "required": required, "status": status, "message": message, "next_action": next_action}
+
+    @staticmethod
+    def _stage(key: str, title: str, status: str, detail: str) -> Dict[str, str]:
+        return {"key": key, "title": title, "status": status, "detail": detail}
+
+    @staticmethod
+    def _llm_test_payload(success: bool, message: str, *, error: Optional[str], error_type: Optional[str], resolved_model: Optional[str], latency_ms: Optional[int], next_step: Optional[str], stages: List[Dict[str, str]]) -> Dict[str, Any]:
+        return {"success": success, "message": message, "error": error, "error_type": error_type, "resolved_model": resolved_model, "latency_ms": latency_ms, "next_step": next_step, "stages": stages}
+
+    @staticmethod
+    def _smoke_payload(success: bool, message: str, *, error_code: Optional[str], next_step: Optional[str], resolved_stock_code: Optional[str], summary: str, setup_status: Dict[str, Any]) -> Dict[str, Any]:
+        return {"success": success, "message": message, "error_code": error_code, "next_step": next_step, "resolved_stock_code": resolved_stock_code, "summary": summary, "setup_status": setup_status}
+
+    def _build_primary_llm_check(self, *, runtime_config: Config) -> Dict[str, Any]:
+        active_model = (getattr(runtime_config, "litellm_model", "") or "").strip()
+        if active_model:
+            return self._setup_check("llm_primary", "LLM 主渠道", "ai_model", True, "configured", f"当前可用主模型：{active_model}")
+        return self._setup_check("llm_primary", "LLM 主渠道", "ai_model", True, "needs_action", "尚未检测到可用的主模型配置", "请先配置至少一个可用的模型渠道或主模型")
+
+    def _build_agent_llm_check(
+        self,
+        *,
+        effective_map: Dict[str, str],
+        runtime_config: Config,
+        llm_check: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if llm_check["status"] not in {"configured", "inherited"}:
+            return self._setup_check("llm_agent", "Agent 渠道", "agent", True, "needs_action", "Agent 当前还没有可继承的主模型", "请先完成主模型配置")
+
+        configured_agent_model = (effective_map.get("AGENT_LITELLM_MODEL") or "").strip()
+        if not configured_agent_model:
+            return self._setup_check("llm_agent", "Agent 渠道", "agent", True, "inherited", f"未单独配置，默认继承主模型：{getattr(runtime_config, 'litellm_model', '')}")
+        return self._setup_check("llm_agent", "Agent 渠道", "agent", True, "configured", f"当前 Agent 主模型：{getattr(runtime_config, 'agent_litellm_model', '') or configured_agent_model}")
+
+    @staticmethod
+    def _build_stock_list_check(*, runtime_config: Config) -> Dict[str, Any]:
+        stock_count = len(getattr(runtime_config, "stock_list", []) or [])
+        if stock_count > 0:
+            return SystemConfigService._setup_check("stock_list", "自选股", "base", True, "configured", f"已配置 {stock_count} 只股票")
+        return SystemConfigService._setup_check("stock_list", "自选股", "base", True, "needs_action", "当前自选股列表为空", "请至少添加 1 只股票用于首次试跑")
+
+    @staticmethod
+    def _build_notification_check(*, runtime_config: Config) -> Dict[str, Any]:
+        configured = any(
+            [
+                bool(getattr(runtime_config, "feishu_webhook_url", "")),
+                bool(getattr(runtime_config, "telegram_bot_token", "") and getattr(runtime_config, "telegram_chat_id", "")),
+                bool(getattr(runtime_config, "email_sender", "") and getattr(runtime_config, "email_password", "") and getattr(runtime_config, "email_receivers", [])),
+                bool(getattr(runtime_config, "pushplus_token", "")),
+                bool(getattr(runtime_config, "serverchan3_sendkey", "")),
+                bool(getattr(runtime_config, "custom_webhook_urls", [])),
+                bool(getattr(runtime_config, "discord_webhook_url", "")),
+                bool(getattr(runtime_config, "slack_webhook_url", "")),
+                bool(getattr(runtime_config, "pushover_user_key", "") and getattr(runtime_config, "pushover_api_token", "")),
+            ]
+        )
+        return SystemConfigService._setup_check(
+            "notification",
+            "通知渠道",
+            "notification",
+            False,
+            "configured" if configured else "optional",
+            "已检测到可用通知配置" if configured else "通知为可选项，未配置也不影响首次跑通",
+            None if configured else "需要时可稍后再配置飞书、Telegram、邮件等通知",
+        )
+
+    @staticmethod
+    def _build_storage_check(*, runtime_config: Config) -> Dict[str, Any]:
+        db_path = Path(getattr(runtime_config, "database_path", "./data/stock_analysis.db")).expanduser()
+        try:
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            with sqlite3.connect(str(db_path)) as connection:
+                connection.execute("SELECT 1")
+            return SystemConfigService._setup_check("storage", "数据库 / 本地存储", "system", True, "configured", f"SQLite 可用：{db_path}")
+        except Exception as exc:
+            return SystemConfigService._setup_check("storage", "数据库 / 本地存储", "system", True, "needs_action", f"本地数据库不可用：{exc}", "请检查 DATABASE_PATH 指向的目录是否可写")
+
+    @staticmethod
+    def _resolve_setup_stock(raw_value: str) -> Tuple[Optional[str], Optional[str]]:
+        text = (raw_value or "").strip()
+        if not text:
+            return None, None
+        if re.fullmatch(r"^[A-Za-z0-9.\-]+$", text):
+            return canonical_stock_code(text), None
+        resolved_code = resolve_name_to_code(text)
+        if not resolved_code:
+            return None, None
+        return canonical_stock_code(resolved_code), text
 
     @staticmethod
     def _validate_value(key: str, value: str, field_schema: Dict[str, Any]) -> List[Dict[str, Any]]:

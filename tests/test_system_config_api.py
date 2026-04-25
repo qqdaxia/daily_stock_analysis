@@ -15,8 +15,8 @@ ensure_litellm_stub()
 
 from api.v1.endpoints import system_config
 from api.v1.schemas.system_config import (
-    DiscoverLLMChannelModelsRequest,
     ImportSystemConfigRequest,
+    SetupSmokeRunRequest,
     TestLLMChannelRequest,
     UpdateSystemConfigRequest,
 )
@@ -57,11 +57,12 @@ class SystemConfigApiTestCase(unittest.TestCase):
         os.environ.pop("ENV_FILE", None)
         self.temp_dir.cleanup()
 
-    def test_get_config_returns_raw_secret_value(self) -> None:
+    def test_get_config_returns_masked_secret_value(self) -> None:
         payload = system_config.get_system_config(include_schema=True, service=self.service).model_dump(by_alias=True)
         item_map = {item["key"]: item for item in payload["items"]}
-        self.assertEqual(item_map["GEMINI_API_KEY"]["value"], "secret-key-value")
-        self.assertFalse(item_map["GEMINI_API_KEY"]["is_masked"])
+        self.assertEqual(item_map["GEMINI_API_KEY"]["value"], "******")
+        self.assertTrue(item_map["GEMINI_API_KEY"]["is_masked"])
+        self.assertIn("setup_status", payload)
 
     def test_put_config_updates_secret_and_plain_field(self) -> None:
         current = system_config.get_system_config(include_schema=False, service=self.service).model_dump()
@@ -270,9 +271,11 @@ class SystemConfigApiTestCase(unittest.TestCase):
                 "success": True,
                 "message": "LLM channel test succeeded",
                 "error": None,
-                "resolved_protocol": "openai",
+                "error_type": None,
                 "resolved_model": "openai/gpt-4o-mini",
                 "latency_ms": 123,
+                "next_step": None,
+                "stages": [],
             },
         ) as mock_test:
             payload = system_config.test_llm_channel(
@@ -282,6 +285,7 @@ class SystemConfigApiTestCase(unittest.TestCase):
                     base_url="https://api.example.com/v1",
                     api_key="sk-test",
                     models=["gpt-4o-mini"],
+                    mask_token="******",
                 ),
                 service=self.service,
             ).model_dump()
@@ -289,6 +293,7 @@ class SystemConfigApiTestCase(unittest.TestCase):
         self.assertTrue(payload["success"])
         self.assertEqual(payload["resolved_model"], "openai/gpt-4o-mini")
         mock_test.assert_called_once()
+        self.assertEqual(mock_test.call_args.kwargs["mask_token"], "******")
 
     def test_validate_returns_user_facing_model_message_without_internal_env_key_name(self) -> None:
         validation = self.service.validate(
@@ -307,32 +312,34 @@ class SystemConfigApiTestCase(unittest.TestCase):
         self.assertNotIn("LITELLM_MODEL", issue["message"])
         self.assertIn("primary model", issue["message"].lower())
 
-    def test_discover_llm_channel_models_endpoint_returns_service_payload(self) -> None:
+    def test_run_setup_smoke_endpoint_returns_service_payload(self) -> None:
         with patch.object(
             self.service,
-            "discover_llm_channel_models",
+            "run_setup_smoke",
             return_value={
                 "success": True,
-                "message": "LLM channel model discovery succeeded",
-                "error": None,
-                "resolved_protocol": "openai",
-                "models": ["qwen-plus", "qwen-turbo"],
-                "latency_ms": 88,
+                "message": "首次试跑通过",
+                "error_code": None,
+                "next_step": "现在可以发起正式分析",
+                "resolved_stock_code": "600519",
+                "summary": "已完成 dry-run",
+                "setup_status": {
+                    "is_complete": False,
+                    "ready_for_smoke": True,
+                    "required_missing_keys": [],
+                    "next_step_key": None,
+                    "checks": [],
+                },
             },
-        ) as mock_discover:
-            payload = system_config.discover_llm_channel_models(
-                request=DiscoverLLMChannelModelsRequest(
-                    name="dashscope",
-                    protocol="openai",
-                    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-                    api_key="sk-test",
-                ),
+        ) as mock_smoke:
+            payload = system_config.run_setup_smoke(
+                request=SetupSmokeRunRequest(stock_input="贵州茅台"),
                 service=self.service,
             ).model_dump()
 
         self.assertTrue(payload["success"])
-        self.assertEqual(payload["models"], ["qwen-plus", "qwen-turbo"])
-        mock_discover.assert_called_once()
+        self.assertEqual(payload["resolved_stock_code"], "600519")
+        mock_smoke.assert_called_once_with(stock_input="贵州茅台")
 
 
 if __name__ == "__main__":

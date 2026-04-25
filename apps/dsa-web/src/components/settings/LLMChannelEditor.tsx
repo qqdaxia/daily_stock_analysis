@@ -1115,7 +1115,7 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
           status: result.success ? 'success' : 'error',
           text: result.success
             ? `已获取 ${result.models.length} 个模型${result.latencyMs ? ` · ${result.latencyMs} ms` : ''}`
-            : (result.error || result.message || '获取模型失败'),
+            : result.error || result.message || '获取模型失败',
           models: result.success ? result.models : (previous[channel.id]?.models || []),
         },
       }));

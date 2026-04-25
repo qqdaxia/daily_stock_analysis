@@ -69,6 +69,7 @@ class SystemConfigResponse(BaseModel):
     mask_token: str
     items: List[SystemConfigItem]
     updated_at: Optional[str] = None
+    setup_status: "SetupWizardStatus"
 
 
 class ExportSystemConfigResponse(BaseModel):
@@ -149,6 +150,38 @@ class TestLLMChannelRequest(BaseModel):
     models: List[str] = Field(default_factory=list)
     enabled: bool = True
     timeout_seconds: float = 20.0
+    mask_token: str = "******"
+
+
+class SetupWizardCheck(BaseModel):
+    """One first-run setup checklist item."""
+
+    key: str
+    title: str
+    category: str
+    required: bool
+    status: Literal["configured", "needs_action", "optional", "inherited", "warning"]
+    message: str
+    next_action: Optional[str] = None
+
+
+class SetupWizardStatus(BaseModel):
+    """First-run setup summary returned with system config."""
+
+    is_complete: bool
+    ready_for_smoke: bool
+    required_missing_keys: List[str] = Field(default_factory=list)
+    next_step_key: Optional[str] = None
+    checks: List[SetupWizardCheck] = Field(default_factory=list)
+
+
+class LLMTestStage(BaseModel):
+    """Stage-level detail for LLM connectivity tests."""
+
+    key: str
+    title: str
+    status: Literal["pending", "running", "success", "failed", "skipped"]
+    detail: str
 
 
 class TestLLMChannelResponse(BaseModel):
@@ -157,9 +190,11 @@ class TestLLMChannelResponse(BaseModel):
     success: bool
     message: str
     error: Optional[str] = None
-    resolved_protocol: Optional[str] = None
+    error_type: Optional[str] = None
     resolved_model: Optional[str] = None
     latency_ms: Optional[int] = None
+    next_step: Optional[str] = None
+    stages: List[LLMTestStage] = Field(default_factory=list)
 
 
 class DiscoverLLMChannelModelsRequest(BaseModel):
@@ -184,6 +219,24 @@ class DiscoverLLMChannelModelsResponse(BaseModel):
     latency_ms: Optional[int] = None
 
 
+class SetupSmokeRunRequest(BaseModel):
+    """Low-risk first-run smoke check request."""
+
+    stock_input: str = ""
+
+
+class SetupSmokeRunResponse(BaseModel):
+    """Low-risk first-run smoke check response."""
+
+    success: bool
+    message: str
+    error_code: Optional[str] = None
+    next_step: Optional[str] = None
+    resolved_stock_code: Optional[str] = None
+    summary: Optional[str] = None
+    setup_status: SetupWizardStatus
+
+
 class SystemConfigValidationErrorResponse(BaseModel):
     """Error payload for failed update validation."""
 
@@ -198,3 +251,7 @@ class SystemConfigConflictResponse(BaseModel):
     error: str
     message: str
     current_config_version: str
+
+
+SystemConfigResponse.model_rebuild()
+SetupSmokeRunResponse.model_rebuild()

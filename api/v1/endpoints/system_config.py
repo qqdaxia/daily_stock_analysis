@@ -15,6 +15,8 @@ from api.v1.schemas.system_config import (
     DiscoverLLMChannelModelsResponse,
     ExportSystemConfigResponse,
     ImportSystemConfigRequest,
+    SetupSmokeRunRequest,
+    SetupSmokeRunResponse,
     SystemConfigConflictResponse,
     SystemConfigResponse,
     SystemConfigSchemaResponse,
@@ -294,6 +296,7 @@ def test_llm_channel(
             models=request.models,
             enabled=request.enabled,
             timeout_seconds=request.timeout_seconds,
+            mask_token=request.mask_token,
         )
         return TestLLMChannelResponse.model_validate(payload)
     except (ValueError, TypeError) as exc:
@@ -355,6 +358,35 @@ def discover_llm_channel_models(
             detail={
                 "error": "internal_error",
                 "message": "Failed to discover LLM channel models",
+            },
+        )
+
+
+@router.post(
+    "/config/setup/smoke-run",
+    response_model=SetupSmokeRunResponse,
+    responses={
+        200: {"description": "Smoke run completed"},
+        500: {"description": "Internal server error", "model": ErrorResponse},
+    },
+    summary="Run first-run smoke check",
+    description="Run a low-risk dry-run check for one stock without generating a formal report.",
+)
+def run_setup_smoke(
+    request: SetupSmokeRunRequest,
+    service: SystemConfigService = Depends(get_system_config_service),
+) -> SetupSmokeRunResponse:
+    """Run a first-run smoke check."""
+    try:
+        payload = service.run_setup_smoke(stock_input=request.stock_input)
+        return SetupSmokeRunResponse.model_validate(payload)
+    except Exception as exc:
+        logger.error("Failed to run setup smoke check: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "internal_error",
+                "message": "Failed to run setup smoke check",
             },
         )
 

@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { analysisApi, DuplicateTaskError } from '../../api/analysis';
+import { systemConfigApi } from '../../api/systemConfig';
 import { historyApi } from '../../api/history';
 import { useStockPoolStore } from '../../stores';
 import { getReportText, normalizeReportLanguage } from '../../utils/reportLanguage';
@@ -36,6 +37,12 @@ vi.mock('../../api/analysis', async () => {
     },
   };
 });
+
+vi.mock('../../api/systemConfig', () => ({
+  systemConfigApi: {
+    getConfig: vi.fn(),
+  },
+}));
 
 vi.mock('../../hooks/useTaskStream', () => ({
   useTaskStream: vi.fn(),
@@ -74,6 +81,39 @@ describe('HomePage', () => {
     vi.clearAllMocks();
     navigateMock.mockReset();
     useStockPoolStore.getState().resetDashboardState();
+    localStorage.clear();
+    vi.mocked(systemConfigApi.getConfig).mockResolvedValue({
+      configVersion: 'v1',
+      maskToken: '******',
+      items: [],
+      updatedAt: '2026-03-21T00:00:00Z',
+      setupStatus: {
+        isComplete: false,
+        readyForSmoke: false,
+        requiredMissingKeys: ['llm_primary', 'stock_list'],
+        nextStepKey: 'llm_primary',
+        checks: [
+          {
+            key: 'llm_primary',
+            title: 'LLM 主渠道',
+            category: 'ai_model',
+            required: true,
+            status: 'needs_action',
+            message: '尚未检测到可用的主模型配置',
+            nextAction: '请先配置主模型',
+          },
+          {
+            key: 'stock_list',
+            title: '自选股',
+            category: 'base',
+            required: true,
+            status: 'needs_action',
+            message: '当前自选股列表为空',
+            nextAction: '请先添加股票',
+          },
+        ],
+      },
+    });
   });
 
   it('renders the dashboard workspace and auto-loads the first report', async () => {
@@ -128,6 +168,25 @@ describe('HomePage', () => {
     expect(screen.getByRole('heading', { name: '开始分析', level: 3 })).toBeInTheDocument();
     expect(screen.getByText('输入股票代码进行分析，或从左侧选择历史报告查看。')).toBeInTheDocument();
     expect(screen.getByText('暂无历史分析记录')).toBeInTheDocument();
+  });
+
+  it('shows first-run setup prompt on the home page and navigates to settings', async () => {
+    vi.mocked(historyApi.getList).mockResolvedValue({
+      total: 0,
+      page: 1,
+      limit: 20,
+      items: [],
+    });
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('基础配置尚未完成')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '打开设置页' }));
+    expect(navigateMock).toHaveBeenCalledWith('/settings');
   });
 
   it('surfaces duplicate task warnings from dashboard submission', async () => {
