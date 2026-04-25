@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent / "scripts"
@@ -144,3 +145,64 @@ def test_backend_startup_check_silent_when_bundle_consistent(
         "Frontend bundle is inconsistent" in record.getMessage()
         for record in caplog.records
     )
+
+
+def test_missing_asset_returns_safe_404_content_types(tmp_path: Path) -> None:
+    from api.app import create_app
+
+    static_dir = tmp_path / "static"
+    assets_dir = static_dir / "assets"
+    assets_dir.mkdir(parents=True)
+    (assets_dir / "index-abc.js").write_text("// ok", encoding="utf-8")
+    (assets_dir / "index-abc.css").write_text("/* ok */", encoding="utf-8")
+    _write_index(static_dir, _vite_index("index-abc.js", "index-abc.css"))
+
+    client = TestClient(create_app(static_dir=static_dir))
+
+    js_response = client.get("/assets/index-missing.js")
+    css_response = client.get("/assets/index-missing.css")
+    html_response = client.get("/assets/%3Cscript%3Ealert(1)%3C/script%3E.html")
+
+    assert js_response.status_code == 404
+    assert js_response.text == "asset not found"
+    assert js_response.headers["content-type"].startswith("text/javascript")
+
+    assert css_response.status_code == 404
+    assert css_response.text == "asset not found"
+    assert css_response.headers["content-type"].startswith("text/css")
+
+    assert html_response.status_code == 404
+    assert html_response.text == "asset not found"
+    assert html_response.headers["content-type"].startswith("text/plain")
+
+
+@pytest.mark.parametrize(
+    "request_path",
+    [
+        "/assets/..%5C..%5Csecret.txt",
+        "/assets/C:%5Csecret.txt",
+        "/assets/%5Cwindows%5Csystem32%5Cconfig",
+        "/assets/%2e%2e/%2e%2e/secret.txt",
+    ],
+)
+def test_asset_traversal_attempts_are_rejected(
+    tmp_path: Path,
+    request_path: str,
+) -> None:
+    from api.app import create_app
+
+    static_dir = tmp_path / "static"
+    assets_dir = static_dir / "assets"
+    assets_dir.mkdir(parents=True)
+    (assets_dir / "index-abc.js").write_text("// ok", encoding="utf-8")
+    (assets_dir / "index-abc.css").write_text("/* ok */", encoding="utf-8")
+    _write_index(static_dir, _vite_index("index-abc.js", "index-abc.css"))
+    outside_secret = tmp_path / "secret.txt"
+    outside_secret.write_text("top secret", encoding="utf-8")
+
+    client = TestClient(create_app(static_dir=static_dir))
+    response = client.get(request_path)
+
+    assert response.status_code == 404
+    assert response.text == "not found"
+    assert "top secret" not in response.text

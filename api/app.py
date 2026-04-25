@@ -22,6 +22,7 @@ import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import unquote
 from typing import List, Optional
 
 from fastapi import FastAPI, Request
@@ -37,6 +38,7 @@ _INDEX_ASSET_REF_PATTERN = re.compile(
     r"""(?:src|href)\s*=\s*["'](/assets/[^"']+)["']""",
     re.IGNORECASE,
 )
+_SAFE_MISSING_ASSET_MEDIA_TYPES = frozenset({"text/css", "text/javascript"})
 
 
 def _check_frontend_assets_consistency(static_dir: Path) -> List[str]:
@@ -77,6 +79,31 @@ def _check_frontend_assets_consistency(static_dir: Path) -> List[str]:
             ", ".join(missing),
         )
     return missing
+
+
+def _resolve_asset_path(assets_dir: Path, asset_path: str) -> Optional[Path]:
+    """Resolve a requested asset path while keeping it confined to assets_dir."""
+    decoded_path = unquote(asset_path)
+    if not decoded_path or decoded_path.startswith(("/", "\\")):
+        return None
+    if "\\" in decoded_path:
+        return None
+    if ":" in decoded_path.split("/", 1)[0]:
+        return None
+
+    assets_root = assets_dir.resolve()
+    candidate = (assets_root / decoded_path).resolve()
+    if not candidate.is_relative_to(assets_root):
+        return None
+    return candidate
+
+
+def _missing_asset_media_type(asset_path: str) -> str:
+    """Return a safe media type for a missing asset response."""
+    content_type, _ = mimetypes.guess_type(asset_path)
+    if content_type in _SAFE_MISSING_ASSET_MEDIA_TYPES:
+        return content_type
+    return "text/plain"
 
 from api.v1 import api_v1_router
 from api.middlewares.auth import add_auth_middleware
@@ -242,25 +269,20 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
         @app.get("/assets/{asset_path:path}", include_in_schema=False)
         async def serve_asset(asset_path: str):
-            # Disallow path traversal; assets are flat files emitted by vite.
-            if ".." in asset_path.split("/") or asset_path.startswith("/"):
+            file_path = _resolve_asset_path(assets_dir, asset_path)
+            if file_path is None:
                 return Response(
                     content="not found",
                     status_code=404,
                     media_type="text/plain",
                 )
-            file_path = assets_dir / asset_path
             if file_path.is_file():
                 content_type, _ = mimetypes.guess_type(str(file_path))
                 return FileResponse(file_path, media_type=content_type)
-            # Pick a content-type matching the requested extension so
-            # browsers don't reject the response with a strict-MIME error
-            # before the user sees the 404.
-            fallback_type, _ = mimetypes.guess_type(asset_path)
             return Response(
-                content=f"asset not found: /assets/{asset_path}",
+                content="asset not found",
                 status_code=404,
-                media_type=fallback_type or "text/plain",
+                media_type=_missing_asset_media_type(asset_path),
             )
 
         # SPA 路由回退
