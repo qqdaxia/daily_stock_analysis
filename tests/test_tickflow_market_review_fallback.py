@@ -13,13 +13,15 @@ from data_provider.base import DataFetcherManager
 
 
 class _DummyFetcher:
-    def __init__(self, name, indices=None, stats=None):
+    def __init__(self, name, indices=None, stats=None, hot_stocks=None):
         self.name = name
         self.priority = 1
         self.indices = indices
         self.stats = stats
+        self.hot_stocks = hot_stocks
         self.index_calls = 0
         self.stats_calls = 0
+        self.hot_stock_calls = 0
 
     def get_main_indices(self, region="cn"):
         self.index_calls += 1
@@ -28,6 +30,10 @@ class _DummyFetcher:
     def get_market_stats(self):
         self.stats_calls += 1
         return self.stats
+
+    def get_hot_stocks(self, n=5):
+        self.hot_stock_calls += 1
+        return self.hot_stocks
 
 
 class _DummyTickFlowFetcher:
@@ -148,6 +154,39 @@ class TestTickFlowMarketReviewFallback(unittest.TestCase):
         self.assertTrue(tickflow_fetcher.closed)
         self.assertIsNone(manager._tickflow_fetcher)
         self.assertIsNone(manager._tickflow_api_key)
+
+    def test_manager_prefers_hot_stocks_when_available(self):
+        manager = DataFetcherManager.__new__(DataFetcherManager)
+        primary = _DummyFetcher(
+            "EfinanceFetcher",
+            hot_stocks=[{"code": "300308", "name": "中际旭创", "change_pct": 9.9, "amount": 2e9}],
+        )
+        fallback = _DummyFetcher(
+            "AkshareFetcher",
+            hot_stocks=[{"code": "000001", "name": "平安银行", "change_pct": 3.1, "amount": 1e9}],
+        )
+        manager._fetchers = [primary, fallback]
+
+        data = DataFetcherManager.get_hot_stocks(manager, n=3)
+
+        self.assertEqual(data[0]["code"], "300308")
+        self.assertEqual(primary.hot_stock_calls, 1)
+        self.assertEqual(fallback.hot_stock_calls, 0)
+
+    def test_manager_falls_back_when_hot_stocks_missing(self):
+        manager = DataFetcherManager.__new__(DataFetcherManager)
+        primary = _DummyFetcher("EfinanceFetcher", hot_stocks=[])
+        fallback = _DummyFetcher(
+            "AkshareFetcher",
+            hot_stocks=[{"code": "000001", "name": "平安银行", "change_pct": 3.1, "amount": 1e9}],
+        )
+        manager._fetchers = [primary, fallback]
+
+        data = DataFetcherManager.get_hot_stocks(manager, n=3)
+
+        self.assertEqual(data[0]["code"], "000001")
+        self.assertEqual(primary.hot_stock_calls, 1)
+        self.assertEqual(fallback.hot_stock_calls, 1)
 
 
 if __name__ == "__main__":

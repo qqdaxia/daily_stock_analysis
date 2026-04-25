@@ -601,46 +601,12 @@ class EfinanceFetcher(BaseFetcher):
         if _is_etf_code(stock_code):
             return self._get_etf_realtime_quote(stock_code)
 
-        import efinance as ef
-        circuit_breaker = get_realtime_circuit_breaker()
-        source_key = "efinance"
-        
-        # 检查熔断器状态
-        if not circuit_breaker.is_available(source_key):
-            logger.info(f"[熔断] 数据源 {source_key} 处于熔断状态，跳过")
+        df = self._get_stock_realtime_dataframe()
+        if df is None or df.empty:
+            logger.info(f"[实时行情] 股票实时行情数据为空，跳过 {stock_code}")
             return None
-        
+
         try:
-            # 检查缓存
-            current_time = time.time()
-            if (_realtime_cache['data'] is not None and 
-                current_time - _realtime_cache['timestamp'] < _realtime_cache['ttl']):
-                df = _realtime_cache['data']
-                cache_age = int(current_time - _realtime_cache['timestamp'])
-                logger.debug(f"[缓存命中] 实时行情(efinance) - 缓存年龄 {cache_age}s/{_realtime_cache['ttl']}s")
-            else:
-                # 触发全量刷新
-                logger.info(f"[缓存未命中] 触发全量刷新 实时行情(efinance)")
-                # 防封禁策略
-                self._set_random_user_agent()
-                self._enforce_rate_limit()
-                
-                logger.info(f"[API调用] ef.stock.get_realtime_quotes() 获取实时行情...")
-                import time as _time
-                api_start = _time.time()
-                
-                # efinance 的实时行情 API (with timeout to avoid indefinite hangs)
-                df = _ef_call_with_timeout(ef.stock.get_realtime_quotes)
-                
-                api_elapsed = _time.time() - api_start
-                logger.info(f"[API返回] ef.stock.get_realtime_quotes 成功: 返回 {len(df)} 只股票, 耗时 {api_elapsed:.2f}s")
-                circuit_breaker.record_success(source_key)
-                
-                # 更新缓存
-                _realtime_cache['data'] = df
-                _realtime_cache['timestamp'] = current_time
-                logger.info(f"[缓存更新] 实时行情(efinance) 缓存已刷新，TTL={_realtime_cache['ttl']}s")
-            
             # 查找指定股票
             # efinance 返回的列名可能是 '股票代码' 或 'code'
             code_col = '股票代码' if '股票代码' in df.columns else 'code'
@@ -693,13 +659,61 @@ class EfinanceFetcher(BaseFetcher):
             logger.info(f"[实时行情-efinance] {stock_code} {quote.name}: 价格={quote.price}, 涨跌={quote.change_pct}%, "
                        f"量比={quote.volume_ratio}, 换手率={quote.turnover_rate}%")
             return quote
-            
+        except Exception as e:
+            logger.info(f"[API错误] 解析 {stock_code} 实时行情(efinance)失败: {e}")
+            return None
+
+    def _get_stock_realtime_dataframe(self) -> Optional[pd.DataFrame]:
+        import efinance as ef
+
+        circuit_breaker = get_realtime_circuit_breaker()
+        source_key = "efinance"
+
+        if not circuit_breaker.is_available(source_key):
+            logger.info(f"[熔断] 数据源 {source_key} 处于熔断状态，跳过")
+            return None
+
+        try:
+            current_time = time.time()
+            if (
+                _realtime_cache['data'] is not None
+                and current_time - _realtime_cache['timestamp'] < _realtime_cache['ttl']
+            ):
+                df = _realtime_cache['data']
+                cache_age = int(current_time - _realtime_cache['timestamp'])
+                logger.debug(
+                    f"[缓存命中] 实时行情(efinance) - 缓存年龄 {cache_age}s/{_realtime_cache['ttl']}s"
+                )
+                return df
+
+            logger.info(f"[缓存未命中] 触发全量刷新 实时行情(efinance)")
+            self._set_random_user_agent()
+            self._enforce_rate_limit()
+
+            logger.info(f"[API调用] ef.stock.get_realtime_quotes() 获取实时行情...")
+            import time as _time
+            api_start = _time.time()
+
+            df = _ef_call_with_timeout(ef.stock.get_realtime_quotes)
+
+            api_elapsed = _time.time() - api_start
+            logger.info(
+                f"[API返回] ef.stock.get_realtime_quotes 成功: 返回 {len(df)} 只股票, 耗时 {api_elapsed:.2f}s"
+            )
+            circuit_breaker.record_success(source_key)
+
+            _realtime_cache['data'] = df
+            _realtime_cache['timestamp'] = current_time
+            logger.info(f"[缓存更新] 实时行情(efinance) 缓存已刷新，TTL={_realtime_cache['ttl']}s")
+            return df
         except FuturesTimeoutError:
-            logger.info(f"[超时] ef.stock.get_realtime_quotes() 超过 {_EF_CALL_TIMEOUT}s，跳过 {stock_code}")
+            logger.info(
+                f"[超时] ef.stock.get_realtime_quotes() 超过 {_EF_CALL_TIMEOUT}s，跳过实时行情全量请求"
+            )
             circuit_breaker.record_failure(source_key, "timeout")
             return None
         except Exception as e:
-            logger.info(f"[API错误] 获取 {stock_code} 实时行情(efinance)失败: {e}")
+            logger.info(f"[API错误] 获取股票实时行情(efinance)失败: {e}")
             circuit_breaker.record_failure(source_key, str(e))
             return None
 
@@ -912,6 +926,46 @@ class EfinanceFetcher(BaseFetcher):
         except Exception as e:
             logger.error(f"[efinance] 获取市场统计失败: {e}")
             return None
+
+    def get_hot_stocks(self, n: int = 5) -> Optional[List[Dict[str, Any]]]:
+        """基于 efinance 全市场实时行情构建热门股票榜。"""
+        df = self._get_stock_realtime_dataframe()
+        if df is None or df.empty:
+            return None
+
+        code_col = '股票代码' if '股票代码' in df.columns else 'code'
+        name_col = '股票名称' if '股票名称' in df.columns else 'name'
+        pct_col = '涨跌幅' if '涨跌幅' in df.columns else 'pct_chg'
+        amt_col = '成交额' if '成交额' in df.columns else 'amount'
+        turn_col = '换手率' if '换手率' in df.columns else 'turnover_rate'
+
+        required_cols = [code_col, name_col, pct_col, amt_col]
+        if any(col not in df.columns for col in required_cols):
+            return None
+
+        work_df = df[required_cols + ([turn_col] if turn_col in df.columns else [])].copy()
+        work_df[code_col] = work_df[code_col].astype(str).str.strip()
+        work_df = work_df[work_df[code_col].str.fullmatch(r"\d{6}")]
+        work_df = work_df[~work_df[code_col].map(_is_etf_code)]
+        work_df[pct_col] = pd.to_numeric(work_df[pct_col], errors='coerce')
+        work_df[amt_col] = pd.to_numeric(work_df[amt_col], errors='coerce').fillna(0.0)
+        if turn_col in work_df.columns:
+            work_df[turn_col] = pd.to_numeric(work_df[turn_col], errors='coerce')
+        work_df = work_df.dropna(subset=[pct_col])
+        if work_df.empty:
+            return None
+
+        top_df = work_df.sort_values(by=[pct_col, amt_col], ascending=[False, False]).head(n)
+        return [
+            {
+                "code": str(row[code_col]),
+                "name": str(row[name_col]),
+                "change_pct": float(row[pct_col]),
+                "amount": float(row[amt_col]),
+                "turnover_rate": safe_float(row.get(turn_col)) if turn_col in top_df.columns else None,
+            }
+            for _, row in top_df.iterrows()
+        ]
         
     def _calc_market_stats(
         self,

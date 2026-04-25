@@ -65,6 +65,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - 🧪 **稳定市场复盘相关测试的 LiteLLM stub 行为** — 避免本机安装的 LiteLLM 在测试收集顺序变化时影响市场复盘单元测试。
 - 🧪 **pytest 默认跳过前端依赖目录** — 本地存在 `apps/dsa-web/node_modules` 时不再被后端测试递归扫描，避免发布前 gate 被无关目录拖慢。
+- [新功能] Windows/macOS 桌面端新增 GitHub Release 更新提醒，启动后自动检测新版本并支持从设置页手动检查后跳转下载页
+- [修复] Pipeline Agent 5 个 K 线工具（get_daily_history / analyze_trend / calculate_ma / get_volume_analysis / analyze_pattern）改为 DB-first 加载，消除同一只股票 9x5=45 次重复 HTTP 请求 (Fixes #1066)
+- [修复] Pipeline Agent 执行前按需预热 240 天 K 线历史到 DB，正常情况下 K 线工具调用无需重复网络请求
+- [修复] 冻结 target_date 通过 ContextVar 透传到 Pipeline Agent K 线工具线程，消除跨收盘边界时间漂移
+- [修复] 修复 Windows 桌面端转抄后端 stdout/stderr 时中文日志可能乱码的问题，统一优先使用 UTF-8 并兼容本地代码页回退
+- [改进] Docker 发布工作流收敛为更清晰的正式发布与手动补发链路，并统一官方 Docker Hub 镜像名为 `zhulinsen/daily_stock_analysis`
+- [文档] 补充官方镜像拉取、`docker run` 用法与 `.env` / 数据目录映射说明，不再仅覆盖 Compose 部署路径
+- [改进] Agent 日线工具优先复用本地缓存，并持久化新获取的日线与新闻情报
+- [修复] GitHub Actions 每日分析工作流补齐 `LLM_CHANNELS`、多 Key 与常用 `LLM_<NAME>_*` 渠道变量透传，避免本地可用的多模型配置在云端定时任务中失效（Fixes #1063, #872）
+- [文档] 修正 `feishu_sender.py` 中飞书自定义机器人 Webhook 消息格式示例为 interactive card JSON，并补充飞书自动化 Webhook 触发器配置教程（参数 JSON 与 `card.elements[0].text.content` 字段映射）。
+- [修复] 历史报告详情接口修正 `change_pct` 取值：使用 `is None` 判断避免把 0.0（平盘）当作缺失值丢弃，移除错误的 `change_60d` 兜底，并在 `enhanced_context.realtime` 缺涨跌幅时回退到 `realtime_quote_raw.change_pct` / `pct_chg`，避免历史详情页“不显示涨跌幅” (Fixes #1084)
+- [修复] DeepSeek 官方渠道预设与示例配置同步到 V4，保留 legacy `deepseek-chat` 默认值并增加废弃提示，同时修正模型发现后旧运行时选择导致保存失败的问题 (Fixes #1108, #1109)
+- [文档] 优化根 README 结构，保留功能特性、技术栈、快速开始、推送效果、Web、Agent、赞助商和新闻源链接入口，将细配置、交易纪律和基本面语义收口到完整指南，并将 Docker 徽章指向官方镜像页
+- [文档] 同步英文与繁中 README 的精简入口结构，并补齐完整指南中的 LLM 用量 API 与持仓管理说明
+- [文档] 调整 AI 协作与 PR 模板中的 README 维护规则，明确 README 非必要不更新，细节优先进入专题文档
+- [修复] 桌面端打包链路新增 `scripts/check_static_assets.py` 静态资源一致性检查，并在 `build-backend(.ps1|-macos.sh)` 的源 `static/` 与 PyInstaller 产物里各跑一次；同时在后端启动时校验 `index.html` 引用的 `/assets/*.js`/`*.css` 是否真实存在，发现错配时直接在 `logs/desktop.log` 打印明确错误，避免重现 Release 包打开后白屏（Refs #1064 / #1065 / #1050）
+- [改进] 后端 `/assets/*` 由显式路由托管，资源缺失时返回与请求扩展名匹配的 `text/javascript` / `text/css` 404，而不是被默认 JSON 错误响应误导排查（Refs #1064）
+- [修复] `kimi-k2.6` 调用自动使用模型要求的 `temperature=1.0`，避免主分析、大盘复盘或 Agent 仍传默认温度导致请求被拒绝（Fixes #1102）
+- [新功能] A 股大盘复盘推送新增“热门板块 / 热门股票”附加摘要，板块按当日涨跌幅 Top N、个股按涨跌幅优先和成交额次排序；任一数据源缺失时仅跳过对应区块，不阻断原复盘输出
 
 ## [3.13.0] - 2026-04-21
 

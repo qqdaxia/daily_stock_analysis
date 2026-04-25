@@ -325,6 +325,18 @@ class BaseFetcher(ABC):
         """
         return None
 
+    def get_hot_stocks(self, n: int = 5) -> Optional[List[Dict[str, Any]]]:
+        """
+        获取热门股票榜单
+
+        Args:
+            n: 返回前 n 个
+
+        Returns:
+            List[Dict]: 热门股票列表，元素包含 code/name/change_pct/amount 等字段
+        """
+        return None
+
     def get_daily_data(
         self,
         stock_code: str, 
@@ -2498,3 +2510,32 @@ class DataFetcherManager:
             return top, bottom
         logger.warning(f"[板块排行] 所有数据源均失败，最终错误: {last_error}")
         return [], []
+
+
+    def get_hot_stocks(self, n: int = 5) -> List[Dict[str, Any]]:
+        """获取热门股票榜（自动切换数据源）"""
+        last_error = ""
+
+        for fetcher in self._get_fetchers_snapshot():
+            if not hasattr(fetcher, "get_hot_stocks"):
+                continue
+
+            start = time.time()
+            try:
+                data = fetcher.get_hot_stocks(n)
+                duration_ms = int((time.time() - start) * 1000)
+                if data:
+                    logger.info(
+                        f"[{fetcher.name}] 获取热门股票成功: count={len(data)}, duration={duration_ms}ms"
+                    )
+                    return data
+
+                last_error = f"{fetcher.name}返回空结果"
+                logger.info(f"[{fetcher.name}] 热门股票为空: duration={duration_ms}ms")
+            except Exception as e:
+                error_type, error_reason = summarize_exception(e)
+                last_error = f"{fetcher.name} ({error_type}) {error_reason}"
+                logger.warning(f"[{fetcher.name}] 获取热门股票失败: {error_reason}")
+
+        logger.warning(f"[热门股票] 所有数据源均失败，最终错误: {last_error}")
+        return []

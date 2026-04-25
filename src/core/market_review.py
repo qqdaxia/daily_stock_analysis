@@ -20,6 +20,7 @@ from src.market_analyzer import MarketAnalyzer
 from src.report_language import normalize_report_language
 from src.search_service import SearchService
 from src.analyzer import GeminiAnalyzer
+from src.services.market_review_hotspot_service import MarketReviewHotspotService
 
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,27 @@ def _get_market_review_text(language: str) -> dict[str, str]:
         "us_title": "# 美股大盘复盘",
         "separator": "> 以下为美股大盘复盘",
     }
+
+
+def _append_hotspot_sections(
+    review_report: Optional[str],
+    region: str,
+    language: str,
+) -> Optional[str]:
+    if not review_report:
+        return review_report
+
+    hotspot_region = "cn" if region == "both" else region
+    if hotspot_region != "cn":
+        return review_report
+
+    appendix = MarketReviewHotspotService().build_markdown(
+        region=hotspot_region,
+        language=language,
+    )
+    if not appendix:
+        return review_report
+    return f"{review_report}\n\n---\n\n{appendix}"
 
 
 def run_market_review(
@@ -106,7 +128,13 @@ def run_market_review(
                 region=region,
             )
             review_report = market_analyzer.run_daily_review()
-        
+
+        review_report = _append_hotspot_sections(
+            review_report,
+            region=region,
+            language=getattr(config, "report_language", "zh"),
+        )
+
         if review_report:
             # 保存报告到文件
             date_str = datetime.now().strftime('%Y%m%d')
@@ -116,7 +144,7 @@ def run_market_review(
                 report_filename
             )
             logger.info(f"大盘复盘报告已保存: {filepath}")
-            
+
             # 推送通知（合并模式下跳过，由 main 层统一发送）
             if merge_notification and send_notification:
                 logger.info("合并推送模式：跳过大盘复盘单独推送，将在个股+大盘复盘后统一发送")
@@ -131,10 +159,10 @@ def run_market_review(
                     logger.warning("大盘复盘推送失败")
             elif not send_notification:
                 logger.info("已跳过推送通知 (--no-notify)")
-            
+
             return review_report
-        
+
     except Exception as e:
         logger.error(f"大盘复盘分析失败: {e}")
-    
+
     return None
