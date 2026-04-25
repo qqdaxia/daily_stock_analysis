@@ -80,9 +80,19 @@ LITELLM_MODEL=ollama/qwen3:8b
 - **Gemini API Key 模式约束**：LiteLLM Gemini 文档说明，使用简单 API Key 时应显式写 `gemini/<model>`；裸模型名会默认走 Vertex AI，需要额外的 GCP 凭证与项目配置。因此首次启动向导在 Gemini API Key 场景下会保持 `gemini/` 前缀，不会偷偷切到 Vertex AI 语义。来源：<https://docs.litellm.ai/docs/providers/gemini>、<https://ai.google.dev/gemini-api/docs/models>
 - **当前仓库依赖/运行时范围**：本仓库当前将 LiteLLM 锁定在 `litellm>=1.80.10,<1.82.7`，并显式保留 `openai>=1.0.0` 依赖；首次启动的 LLM 测试、`/models` 发现与渠道保存逻辑均按这一依赖范围实现。若你本地强行升级到超出该范围的新版本，建议先重新执行 `python test_env.py --llm` 与 Web 设置页“测试当前 LLM / 获取模型”再决定是否保留升级。
 - **首次启动保存/清理语义**：首页首次启动卡片与设置页共用同一套后端配置保存接口。保存 1-3 只试跑股票时只会更新 `STOCK_LIST`；渠道保存前的“运行时模型清理”只会清空**已被当前渠道模型列表移除**的 `LITELLM_MODEL` / `AGENT_LITELLM_MODEL` / `VISION_MODEL`，并按交集裁剪 `LITELLM_FALLBACK_MODELS`，不会顺带清空仍然有效的 legacy `*_API_KEY` 或其他 provider 运行时选择。
+- **legacy 默认主模型（与当前代码保持一致）**：
+
+  | 现有旧配置 | 未显式填写 `LITELLM_MODEL` 时的回退结果 |
+  | --- | --- |
+  | `GEMINI_API_KEY` / `GEMINI_API_KEYS` | `gemini/${GEMINI_MODEL or gemini-3-flash-preview}` |
+  | `ANTHROPIC_API_KEY` / `ANTHROPIC_API_KEYS` | `anthropic/${ANTHROPIC_MODEL or claude-3-5-sonnet-20241022}` |
+  | `DEEPSEEK_API_KEY` / `DEEPSEEK_API_KEYS` | `deepseek/deepseek-chat`（仅做向后兼容，同时在运行时输出迁移告警，建议迁到 `deepseek-v4-flash`） |
+  | `OPENAI_API_KEY` / `OPENAI_API_KEYS` / `AIHUBMIX_KEY` | `${OPENAI_MODEL or gpt-4o-mini}`；若值本身不带 provider 前缀，会按运行时规则补成 `openai/<model>` |
+
 - **本次 MVP 回归覆盖**：后端围绕 `tests/test_system_config_service.py`、`tests/test_system_config_api.py` 覆盖了 setup status、LLM 测试、`STOCK_LIST` 保存与 dry-run 语义；前端围绕 `apps/dsa-web/src/pages/__tests__/HomePage.test.tsx`、`apps/dsa-web/src/components/settings/__tests__/LLMChannelEditor.test.tsx` 覆盖了首页向导入口、legacy 主模型回退、模型发现与保存前清理链路。
 - **旧配置迁移路径**：已有 `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` 等 legacy 配置仍可继续跑通首次启动；若你切换到 `LLM_CHANNELS` 渠道模式，建议同时把 `LITELLM_MODEL`、`AGENT_LITELLM_MODEL`、`LITELLM_FALLBACK_MODELS` 调整到当前已启用渠道的模型集合，避免保留指向旧模型名的运行时选择。
 - **回退路径**：如果新渠道预设或首次启动测试不符合你的环境，最安全的回退方式是恢复到原来的 `.env`：保留 legacy `*_API_KEY` + 原主模型配置，或把 `LITELLM_MODEL` 手动改回旧值。首次启动的 dry-run 只做轻量数据抓取校验，不会生成正式报告，也不会替你删除已有配置。
+- **本次可复现验证命令**：后端可直接运行 `python -m pytest tests/test_system_config_service.py tests/test_system_config_api.py`；Web 侧按仓库规范运行 `cd apps/dsa-web && npm ci && npm run lint && npm run build`。若你需要复核首次启动闭环，可再在浏览器里走一遍“测试当前 LLM / 保存股票 / 首次试跑”。
 
 如果不方便用网页版，在 `.env` 文件中配置也非常丝滑，它能让你同时管理多个第三方平台。规则如下：
 

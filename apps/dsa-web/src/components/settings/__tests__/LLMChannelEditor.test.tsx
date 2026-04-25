@@ -174,6 +174,61 @@ describe('LLMChannelEditor', () => {
     );
   });
 
+  it('does not silently clear legacy provider keys while pruning stale runtime models', async () => {
+    update.mockResolvedValue({
+      success: true,
+      configVersion: 'v2',
+      appliedCount: 1,
+      skippedMaskedCount: 0,
+      reloadTriggered: true,
+      updatedKeys: ['LLM_DEEPSEEK_MODELS', 'LITELLM_MODEL'],
+      warnings: [],
+    });
+
+    render(
+      <LLMChannelEditor
+        items={[
+          { key: 'OPENAI_API_KEY', value: 'sk-legacy-openai' },
+          { key: 'LLM_CHANNELS', value: 'deepseek' },
+          { key: 'LLM_DEEPSEEK_PROTOCOL', value: 'deepseek' },
+          { key: 'LLM_DEEPSEEK_BASE_URL', value: 'https://api.deepseek.com' },
+          { key: 'LLM_DEEPSEEK_ENABLED', value: 'true' },
+          { key: 'LLM_DEEPSEEK_API_KEY', value: 'sk-test' },
+          { key: 'LLM_DEEPSEEK_MODELS', value: 'deepseek-chat,deepseek-reasoner' },
+          { key: 'LITELLM_MODEL', value: 'deepseek/deepseek-chat' },
+          { key: 'AGENT_LITELLM_MODEL', value: 'deepseek/deepseek-reasoner' },
+          { key: 'LITELLM_FALLBACK_MODELS', value: 'deepseek/deepseek-v4-pro,deepseek/deepseek-chat,cohere/command-r-plus' },
+          { key: 'VISION_MODEL', value: 'deepseek/deepseek-reasoner' },
+        ]}
+        configVersion="v1"
+        maskToken="******"
+        onSaved={() => {}}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /DeepSeek 官方/i }));
+    fireEvent.change(screen.getByLabelText('模型（逗号分隔）'), {
+      target: { value: 'deepseek-v4-flash,deepseek-v4-pro' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存 AI 配置' }));
+
+    await waitFor(() => {
+      expect(update).toHaveBeenCalled();
+    });
+
+    const updatePayload = update.mock.calls[0][0];
+    const updatedKeys = updatePayload.items.map((item: { key: string }) => item.key);
+    expect(updatedKeys).not.toContain('OPENAI_API_KEY');
+    expect(updatePayload.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'LITELLM_MODEL', value: '' }),
+        expect.objectContaining({ key: 'AGENT_LITELLM_MODEL', value: '' }),
+        expect.objectContaining({ key: 'LITELLM_FALLBACK_MODELS', value: 'deepseek/deepseek-v4-pro,cohere/command-r-plus' }),
+        expect.objectContaining({ key: 'VISION_MODEL', value: '' }),
+      ]),
+    );
+  });
+
   it('keeps direct-env provider runtime models while saving channel changes', async () => {
     update.mockResolvedValue({
       success: true,

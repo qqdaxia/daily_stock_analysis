@@ -1151,6 +1151,70 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         llm_check = next(check for check in status["checks"] if check["key"] == "llm_primary")
         self.assertEqual(llm_check["status"], "configured")
 
+    def test_resolve_primary_model_from_map_uses_documented_legacy_defaults(self) -> None:
+        cases = [
+            (
+                {"GEMINI_API_KEY": "sk-gemini"},
+                ("gemini/gemini-3-flash-preview", "legacy_env"),
+            ),
+            (
+                {"ANTHROPIC_API_KEY": "sk-anthropic"},
+                ("anthropic/claude-3-5-sonnet-20241022", "legacy_env"),
+            ),
+            (
+                {"DEEPSEEK_API_KEY": "sk-deepseek"},
+                ("deepseek/deepseek-chat", "legacy_env"),
+            ),
+            (
+                {"OPENAI_API_KEY": "sk-openai"},
+                ("openai/gpt-4o-mini", "legacy_env"),
+            ),
+            (
+                {"AIHUBMIX_KEY": "sk-aihubmix"},
+                ("openai/gpt-4o-mini", "legacy_env"),
+            ),
+        ]
+
+        for effective_map, expected in cases:
+            with self.subTest(effective_map=effective_map):
+                resolved = SystemConfigService._resolve_primary_model_from_map(effective_map)
+                self.assertEqual(resolved, expected)
+
+    def test_update_preserves_legacy_keys_while_clearing_stale_runtime_models(self) -> None:
+        self._rewrite_env(
+            "OPENAI_API_KEY=sk-legacy-openai",
+            "LLM_CHANNELS=deepseek",
+            "LLM_DEEPSEEK_PROTOCOL=deepseek",
+            "LLM_DEEPSEEK_BASE_URL=https://api.deepseek.com",
+            "LLM_DEEPSEEK_API_KEY=sk-deepseek",
+            "LLM_DEEPSEEK_MODELS=deepseek-chat,deepseek-reasoner",
+            "LITELLM_MODEL=deepseek/deepseek-chat",
+            "AGENT_LITELLM_MODEL=deepseek/deepseek-reasoner",
+            "LITELLM_FALLBACK_MODELS=deepseek/deepseek-v4-pro,deepseek/deepseek-chat,cohere/command-r-plus",
+            "VISION_MODEL=deepseek/deepseek-reasoner",
+        )
+
+        result = self.service.update(
+            config_version=self.manager.get_config_version(),
+            reload_now=False,
+            items=[
+                {"key": "LLM_DEEPSEEK_MODELS", "value": "deepseek-v4-flash,deepseek-v4-pro"},
+                {"key": "LITELLM_MODEL", "value": ""},
+                {"key": "AGENT_LITELLM_MODEL", "value": ""},
+                {"key": "LITELLM_FALLBACK_MODELS", "value": "deepseek/deepseek-v4-pro,cohere/command-r-plus"},
+                {"key": "VISION_MODEL", "value": ""},
+            ],
+        )
+
+        self.assertTrue(result["success"])
+        env_content = self.env_path.read_text(encoding="utf-8")
+        self.assertIn("OPENAI_API_KEY=sk-legacy-openai\n", env_content)
+        self.assertIn("LLM_DEEPSEEK_MODELS=deepseek-v4-flash,deepseek-v4-pro\n", env_content)
+        self.assertIn("LITELLM_MODEL=\n", env_content)
+        self.assertIn("AGENT_LITELLM_MODEL=\n", env_content)
+        self.assertIn("LITELLM_FALLBACK_MODELS=deepseek/deepseek-v4-pro,cohere/command-r-plus\n", env_content)
+        self.assertIn("VISION_MODEL=\n", env_content)
+
     def test_validate_reports_invalid_event_rule_semantics(self) -> None:
         validation = self.service.validate(items=[{
             "key": "AGENT_EVENT_ALERT_RULES_JSON",
