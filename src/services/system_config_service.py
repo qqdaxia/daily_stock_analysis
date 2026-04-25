@@ -191,6 +191,43 @@ class SystemConfigService:
         }
 
     @staticmethod
+    def _resolve_env_backed_value(config_map: Dict[str, str], key: str) -> str:
+        """Resolve one config value, falling back to process env when `.env` is blank."""
+        normalized_key = str(key or "").upper()
+        persisted_value = config_map.get(normalized_key)
+        if persisted_value is not None and str(persisted_value).strip():
+            return str(persisted_value)
+        env_value = os.getenv(normalized_key)
+        if env_value is None:
+            return "" if persisted_value is None else str(persisted_value or "")
+        return str(env_value)
+
+    @classmethod
+    def _build_runtime_backed_config_map(
+        cls,
+        config_map: Dict[str, str],
+        *,
+        candidate_keys: Optional[Sequence[str]] = None,
+    ) -> Dict[str, str]:
+        """Overlay env-injected values only when the persisted `.env` copy is missing."""
+        runtime_backed_map = {
+            str(key).upper(): "" if value is None else str(value)
+            for key, value in config_map.items()
+        }
+        keys_to_check = {
+            str(key).upper()
+            for key in (candidate_keys or runtime_backed_map.keys())
+            if str(key).strip()
+        }
+        for key in keys_to_check:
+            if runtime_backed_map.get(key, "").strip():
+                continue
+            env_value = os.getenv(key)
+            if env_value is not None and str(env_value).strip():
+                runtime_backed_map[key] = str(env_value)
+        return runtime_backed_map
+
+    @staticmethod
     def _load_runtime_config(*, reload_runtime: bool = False) -> Config:
         if reload_runtime:
             Config.reset_instance()
@@ -264,8 +301,18 @@ class SystemConfigService:
 
     def get_config(self, include_schema: bool = True, mask_token: str = "******") -> Dict[str, Any]:
         """Return current config values with secret masking and setup status."""
-        config_map = self._build_display_config_map(self._manager.read_config_map())
         registered_keys = set(get_registered_field_keys())
+        sensitive_keys = {
+            key
+            for key in registered_keys
+            if bool(get_field_definition(key, "").get("is_sensitive", False))
+        }
+        config_map = self._build_display_config_map(
+            self._build_runtime_backed_config_map(
+                self._manager.read_config_map(),
+                candidate_keys=sensitive_keys,
+            )
+        )
         all_keys = set(config_map.keys()) | registered_keys
 
         category_orders = {
@@ -694,7 +741,16 @@ class SystemConfigService:
         if errors:
             raise ConfigValidationError(issues=errors)
 
-        current_map = self._manager.read_config_map()
+        sensitive_candidate_keys = [
+            item["key"]
+            for item in items
+            if bool(get_field_definition(item["key"].upper(), item["value"]).get("is_sensitive", False))
+        ]
+        persisted_current_map = self._manager.read_config_map()
+        current_map = self._build_runtime_backed_config_map(
+            persisted_current_map,
+            candidate_keys=sensitive_candidate_keys,
+        )
         submitted_keys: Set[str] = set()
         updates: List[Tuple[str, str]] = []
         sensitive_keys: Set[str] = set()
@@ -706,18 +762,30 @@ class SystemConfigService:
             submitted_keys.add(key)
             if bool(field_schema.get("is_sensitive", False)):
                 sensitive_keys.add(key)
+                effective_current_value = current_map.get(key)
+                persisted_current_value = persisted_current_map.get(key)
+                if (
+                    self._is_masked_placeholder_value(
+                        normalized_value,
+                        mask_token,
+                        current_value=effective_current_value,
+                    )
+                    and effective_current_value
+                    and not (persisted_current_value or "").strip()
+                ):
+                    continue
                 merged_sensitive_value = self._merge_masked_sensitive_value(
                     normalized_value,
                     mask_token,
-                    current_value=current_map.get(key),
+                    current_value=effective_current_value,
                 )
                 if merged_sensitive_value is not None:
                     normalized_value = merged_sensitive_value
                 if self._is_masked_placeholder_value(
                     normalized_value,
                     mask_token,
-                    current_value=current_map.get(key),
-                ) and current_map.get(key):
+                    current_value=effective_current_value,
+                ) and effective_current_value:
                     normalized_value = mask_token
             updates.append((key, normalized_value))
 
@@ -880,7 +948,15 @@ class SystemConfigService:
 
     def _collect_issues(self, items: Sequence[Dict[str, str]], mask_token: str) -> List[Dict[str, Any]]:
         """Collect field-level and cross-field validation issues."""
-        current_map = self._manager.read_config_map()
+        candidate_keys = {
+            item["key"]
+            for item in items
+            if bool(get_field_definition(item["key"].upper(), item["value"]).get("is_sensitive", False))
+        }
+        current_map = self._build_runtime_backed_config_map(
+            self._manager.read_config_map(),
+            candidate_keys=candidate_keys,
+        )
         effective_map = dict(current_map)
         issues: List[Dict[str, Any]] = []
         updated_map: Dict[str, str] = {}
@@ -965,7 +1041,10 @@ class SystemConfigService:
         models: Sequence[str] = (),
     ) -> str:
         prefix = f"LLM_{channel_name.upper()}"
-        channel_api_key = (current_map.get(f"{prefix}_API_KEYS") or "").strip() or (current_map.get(f"{prefix}_API_KEY") or "").strip()
+        channel_api_key = (
+            self._resolve_env_backed_value(current_map, f"{prefix}_API_KEYS").strip()
+            or self._resolve_env_backed_value(current_map, f"{prefix}_API_KEY").strip()
+        )
         if channel_api_key:
             return channel_api_key
 
@@ -989,11 +1068,11 @@ class SystemConfigService:
         _add_candidates(self._api_key_candidates_for_provider(channel_name))
 
         resolved_protocol = resolve_llm_channel_protocol(
-            current_map.get(f"{prefix}_PROTOCOL") or protocol,
-            base_url=current_map.get(f"{prefix}_BASE_URL") or "",
+            self._resolve_env_backed_value(current_map, f"{prefix}_PROTOCOL") or protocol,
+            base_url=self._resolve_env_backed_value(current_map, f"{prefix}_BASE_URL") or "",
             models=[
                 model.strip()
-                for model in (current_map.get(f"{prefix}_MODELS") or "").split(",")
+                for model in self._resolve_env_backed_value(current_map, f"{prefix}_MODELS").split(",")
                 if model.strip()
             ],
             channel_name=channel_name,
@@ -1001,7 +1080,7 @@ class SystemConfigService:
         _add_candidates(self._legacy_provider_api_key_candidates(resolved_protocol))
 
         for env_key in provider_candidates:
-            resolved_api_key = (current_map.get(env_key) or "").strip()
+            resolved_api_key = self._resolve_env_backed_value(current_map, env_key).strip()
             if resolved_api_key:
                 return resolved_api_key
 
@@ -1843,24 +1922,24 @@ class SystemConfigService:
         normalized_provider = canonicalize_llm_channel_protocol(provider)
         if normalized_provider in {"gemini", "vertex_ai"}:
             return cls._has_usable_api_key_value(
-                (effective_map.get("GEMINI_API_KEYS") or "").strip()
-                or (effective_map.get("GEMINI_API_KEY") or "").strip()
+                cls._resolve_env_backed_value(effective_map, "GEMINI_API_KEYS").strip()
+                or cls._resolve_env_backed_value(effective_map, "GEMINI_API_KEY").strip()
             )
         if normalized_provider == "anthropic":
             return cls._has_usable_api_key_value(
-                (effective_map.get("ANTHROPIC_API_KEYS") or "").strip()
-                or (effective_map.get("ANTHROPIC_API_KEY") or "").strip()
+                cls._resolve_env_backed_value(effective_map, "ANTHROPIC_API_KEYS").strip()
+                or cls._resolve_env_backed_value(effective_map, "ANTHROPIC_API_KEY").strip()
             )
         if normalized_provider == "deepseek":
             return cls._has_usable_api_key_value(
-                (effective_map.get("DEEPSEEK_API_KEYS") or "").strip()
-                or (effective_map.get("DEEPSEEK_API_KEY") or "").strip()
+                cls._resolve_env_backed_value(effective_map, "DEEPSEEK_API_KEYS").strip()
+                or cls._resolve_env_backed_value(effective_map, "DEEPSEEK_API_KEY").strip()
             )
         if normalized_provider == "openai":
             return cls._has_usable_api_key_value(
-                (effective_map.get("OPENAI_API_KEYS") or "").strip()
-                or (effective_map.get("AIHUBMIX_KEY") or "").strip()
-                or (effective_map.get("OPENAI_API_KEY") or "").strip()
+                cls._resolve_env_backed_value(effective_map, "OPENAI_API_KEYS").strip()
+                or cls._resolve_env_backed_value(effective_map, "AIHUBMIX_KEY").strip()
+                or cls._resolve_env_backed_value(effective_map, "OPENAI_API_KEY").strip()
             )
         return False
 
@@ -1876,12 +1955,12 @@ class SystemConfigService:
             return False
 
         for env_key in cls._api_key_candidates_for_provider(provider):
-            if cls._has_usable_api_key_value((effective_map.get(env_key) or "").strip()):
+            if cls._has_usable_api_key_value(cls._resolve_env_backed_value(effective_map, env_key).strip()):
                 return True
 
         provider_base_url = ""
         if canonicalize_llm_channel_protocol(provider) == "openai":
-            provider_base_url = (effective_map.get("OPENAI_BASE_URL") or "").strip()
+            provider_base_url = cls._resolve_env_backed_value(effective_map, "OPENAI_BASE_URL").strip()
         return channel_allows_empty_api_key(provider, provider_base_url)
 
     @staticmethod

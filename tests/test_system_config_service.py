@@ -18,6 +18,28 @@ from src.services.system_config_service import ConfigConflictError, ConfigImport
 
 
 class SystemConfigServiceTestCase(unittest.TestCase):
+    _ISOLATED_ENV_KEYS = (
+        "GEMINI_API_KEY",
+        "GEMINI_API_KEYS",
+        "OPENAI_API_KEY",
+        "OPENAI_API_KEYS",
+        "AIHUBMIX_KEY",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_API_KEYS",
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_API_KEYS",
+        "OPENROUTER_API_KEY",
+        "OPENROUTER_API_KEYS",
+        "LLM_CHANNELS",
+        "LLM_PRIMARY_PROTOCOL",
+        "LLM_PRIMARY_BASE_URL",
+        "LLM_PRIMARY_API_KEY",
+        "LLM_PRIMARY_API_KEYS",
+        "LLM_PRIMARY_MODELS",
+        "LITELLM_MODEL",
+        "OPENAI_BASE_URL",
+    )
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.env_path = Path(self.temp_dir.name) / ".env"
@@ -34,6 +56,8 @@ class SystemConfigServiceTestCase(unittest.TestCase):
             encoding="utf-8",
         )
         os.environ["ENV_FILE"] = str(self.env_path)
+        for key in self._ISOLATED_ENV_KEYS:
+            os.environ.pop(key, None)
         Config.reset_instance()
 
         self.manager = ConfigManager(env_path=self.env_path)
@@ -42,6 +66,8 @@ class SystemConfigServiceTestCase(unittest.TestCase):
     def tearDown(self) -> None:
         Config.reset_instance()
         os.environ.pop("ENV_FILE", None)
+        for key in self._ISOLATED_ENV_KEYS:
+            os.environ.pop(key, None)
         self.temp_dir.cleanup()
 
     def _rewrite_env(self, *lines: str) -> None:
@@ -75,6 +101,20 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertTrue(items["LLM_PRIMARY_API_KEYS"]["is_masked"])
         self.assertTrue(items["LLM_PRIMARY_API_KEYS"]["raw_value_exists"])
         self.assertNotIn("sk-first", items["LLM_PRIMARY_API_KEYS"]["value"])
+
+    def test_get_config_masks_runtime_injected_sensitive_value(self) -> None:
+        self._rewrite_env(
+            "STOCK_LIST=600519,000001",
+            "LITELLM_MODEL=gemini/gemini-2.5-flash",
+        )
+        os.environ["GEMINI_API_KEY"] = "runtime-secret"
+
+        payload = self.service.get_config(include_schema=False)
+        items = {item["key"]: item for item in payload["items"]}
+
+        self.assertEqual(items["GEMINI_API_KEY"]["value"], "******")
+        self.assertTrue(items["GEMINI_API_KEY"]["is_masked"])
+        self.assertTrue(items["GEMINI_API_KEY"]["raw_value_exists"])
 
     @patch("litellm.completion")
     def test_test_llm_channel_resolves_masked_saved_api_key(self, mock_completion) -> None:
@@ -148,6 +188,28 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertEqual(mock_completion.call_args.kwargs["api_key"], "persisted-secret")
 
+    @patch("litellm.completion")
+    def test_test_llm_channel_resolves_masked_runtime_legacy_provider_api_key(self, mock_completion) -> None:
+        self._rewrite_env(
+            "LITELLM_MODEL=gemini/gemini-2.5-flash",
+        )
+        os.environ["GEMINI_API_KEY"] = "runtime-secret"
+        mock_completion.return_value = Mock(
+            choices=[Mock(message=Mock(content="OK", content_blocks=None), content_blocks=None)]
+        )
+
+        result = self.service.test_llm_channel(
+            name="gemini",
+            protocol="gemini",
+            base_url="",
+            api_key="******",
+            models=["gemini/gemini-2.5-flash"],
+            mask_token="******",
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(mock_completion.call_args.kwargs["api_key"], "runtime-secret")
+
     @patch("src.services.system_config_service.setup_env")
     @patch("src.services.system_config_service.Config.reset_instance")
     def test_get_setup_status_uses_persisted_stock_list_without_reloading_runtime(
@@ -174,6 +236,19 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertFalse(db_path.exists())
         mock_reset_instance.assert_not_called()
         mock_setup_env.assert_not_called()
+
+    def test_get_setup_status_accepts_runtime_injected_legacy_api_key(self) -> None:
+        self._rewrite_env(
+            "STOCK_LIST=600519",
+            "LITELLM_MODEL=gemini/gemini-2.5-flash",
+        )
+        os.environ["GEMINI_API_KEY"] = "runtime-secret"
+
+        status = self.service.get_setup_status()
+
+        llm_check = next(check for check in status["checks"] if check["key"] == "llm_primary")
+        self.assertEqual(llm_check["status"], "configured")
+        self.assertTrue(status["ready_for_smoke"])
 
     @patch("litellm.completion")
     def test_test_llm_channel_resolves_masked_saved_openai_legacy_key(self, mock_completion) -> None:

@@ -29,6 +29,28 @@ from src.services.system_config_service import SystemConfigService
 class SystemConfigApiTestCase(unittest.TestCase):
     """System config API tests in isolation without loading the full app."""
 
+    _ISOLATED_ENV_KEYS = (
+        "GEMINI_API_KEY",
+        "GEMINI_API_KEYS",
+        "OPENAI_API_KEY",
+        "OPENAI_API_KEYS",
+        "AIHUBMIX_KEY",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_API_KEYS",
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_API_KEYS",
+        "OPENROUTER_API_KEY",
+        "OPENROUTER_API_KEYS",
+        "LLM_CHANNELS",
+        "LLM_PRIMARY_PROTOCOL",
+        "LLM_PRIMARY_BASE_URL",
+        "LLM_PRIMARY_API_KEY",
+        "LLM_PRIMARY_API_KEYS",
+        "LLM_PRIMARY_MODELS",
+        "LITELLM_MODEL",
+        "OPENAI_BASE_URL",
+    )
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.env_path = Path(self.temp_dir.name) / ".env"
@@ -47,6 +69,8 @@ class SystemConfigApiTestCase(unittest.TestCase):
         )
         os.environ["ENV_FILE"] = str(self.env_path)
         os.environ["DSA_DESKTOP_MODE"] = "true"
+        for key in self._ISOLATED_ENV_KEYS:
+            os.environ.pop(key, None)
         Config.reset_instance()
 
         self.manager = ConfigManager(env_path=self.env_path)
@@ -56,6 +80,8 @@ class SystemConfigApiTestCase(unittest.TestCase):
         Config.reset_instance()
         os.environ.pop("DSA_DESKTOP_MODE", None)
         os.environ.pop("ENV_FILE", None)
+        for key in self._ISOLATED_ENV_KEYS:
+            os.environ.pop(key, None)
         self.temp_dir.cleanup()
 
     def test_get_config_returns_masked_secret_value(self) -> None:
@@ -88,6 +114,28 @@ class SystemConfigApiTestCase(unittest.TestCase):
         self.assertEqual(item_map["LLM_PRIMARY_API_KEYS"]["value"], "******,******")
         self.assertTrue(item_map["LLM_PRIMARY_API_KEYS"]["is_masked"])
         self.assertNotIn("sk-first", item_map["LLM_PRIMARY_API_KEYS"]["value"])
+
+    def test_get_config_masks_runtime_injected_secret_value(self) -> None:
+        self.env_path.write_text(
+            "\n".join(
+                [
+                    "STOCK_LIST=600519,000001",
+                    "LITELLM_MODEL=gemini/gemini-2.5-flash",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        os.environ["GEMINI_API_KEY"] = "runtime-secret"
+        self.manager = ConfigManager(env_path=self.env_path)
+        self.service = SystemConfigService(manager=self.manager)
+
+        payload = system_config.get_system_config(include_schema=False, service=self.service).model_dump()
+        item_map = {item["key"]: item for item in payload["items"]}
+
+        self.assertEqual(item_map["GEMINI_API_KEY"]["value"], "******")
+        self.assertTrue(item_map["GEMINI_API_KEY"]["is_masked"])
+        self.assertTrue(item_map["GEMINI_API_KEY"]["raw_value_exists"])
 
     def test_put_config_updates_secret_and_plain_field(self) -> None:
         current = system_config.get_system_config(include_schema=False, service=self.service).model_dump()
@@ -149,6 +197,34 @@ class SystemConfigApiTestCase(unittest.TestCase):
         env_content = self.env_path.read_text(encoding="utf-8")
         self.assertIn("LLM_PRIMARY_API_KEYS=sk-first,sk-second", env_content)
         self.assertIn("STOCK_LIST=600519,300750", env_content)
+
+    def test_put_config_does_not_persist_literal_mask_for_runtime_secret(self) -> None:
+        self.env_path.write_text(
+            "STOCK_LIST=600519,000001\nLITELLM_MODEL=gemini/gemini-2.5-flash\n",
+            encoding="utf-8",
+        )
+        os.environ["GEMINI_API_KEY"] = "runtime-secret"
+        self.manager = ConfigManager(env_path=self.env_path)
+        self.service = SystemConfigService(manager=self.manager)
+        current = system_config.get_system_config(include_schema=False, service=self.service).model_dump()
+
+        payload = system_config.update_system_config(
+            request=UpdateSystemConfigRequest(
+                config_version=current["config_version"],
+                mask_token="******",
+                reload_now=False,
+                items=[
+                    {"key": "GEMINI_API_KEY", "value": "******"},
+                    {"key": "STOCK_LIST", "value": "600519,300750"},
+                ],
+            ),
+            service=self.service,
+        ).model_dump()
+
+        self.assertEqual(payload["applied_count"], 1)
+        env_content = self.env_path.read_text(encoding="utf-8")
+        self.assertIn("STOCK_LIST=600519,300750", env_content)
+        self.assertNotIn("GEMINI_API_KEY=******", env_content)
 
     def test_put_config_merges_structured_masked_multi_key_secret_with_new_entries(self) -> None:
         self.env_path.write_text(
