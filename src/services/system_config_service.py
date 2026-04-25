@@ -579,7 +579,10 @@ class SystemConfigService:
         call_kwargs: Dict[str, Any] = {
             "model": resolved_model,
             "messages": [{"role": "user", "content": "Reply with OK"}],
-            "temperature": 0,
+            "temperature": self._normalize_test_llm_temperature(
+                resolved_model,
+                self._get_runtime_llm_temperature(),
+            ),
             "max_tokens": 256,
             "timeout": max(5.0, float(timeout_seconds)),
         }
@@ -1470,6 +1473,26 @@ class SystemConfigService:
         else:
             models_path = f"{normalized}/models" if normalized else "/models"
         return urlunparse(parsed._replace(path=models_path, params="", query="", fragment=""))
+
+    @staticmethod
+    def _get_runtime_llm_temperature() -> float:
+        """Return the current configured LLM temperature for ad-hoc channel tests."""
+        config = Config._load_from_env()
+        try:
+            return float(getattr(config, "llm_temperature", 0.7))
+        except (TypeError, ValueError):
+            return 0.7
+
+    @staticmethod
+    def _normalize_test_llm_temperature(model: str, temperature: float, default: float = 0.7) -> float:
+        """Apply provider-required temperature overrides for ad-hoc channel tests."""
+        normalized_model = (model or "").strip().lower()
+        if "kimi-k2.6" in normalized_model:
+            return 1.0
+        try:
+            return float(temperature)
+        except (TypeError, ValueError):
+            return default
 
     @staticmethod
     def _extract_llm_discovery_error(response: requests.Response) -> str:
