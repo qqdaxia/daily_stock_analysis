@@ -234,7 +234,9 @@ def get_history_detail(
             change_pct = realtime.get("change_pct")
 
             # 缺失时再从 realtime_quote_raw 兜底
-            realtime_quote_raw = context_snapshot.get("realtime_quote_raw") or {}
+            realtime_quote_raw = context_snapshot.get("realtime_quote_raw")
+            if not isinstance(realtime_quote_raw, dict):
+                realtime_quote_raw = {}
             if current_price is None:
                 current_price = realtime_quote_raw.get("price")
             if change_pct is None:

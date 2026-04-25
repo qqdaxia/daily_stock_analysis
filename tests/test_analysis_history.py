@@ -268,6 +268,38 @@ class AnalysisHistoryTestCase(unittest.TestCase):
         self.assertEqual(report.meta.current_price, 200.0)
         self.assertEqual(report.meta.change_pct, 1.23)
 
+    def test_history_detail_ignores_non_dict_realtime_quote_raw(self) -> None:
+        """Malformed realtime_quote_raw should not break detail responses."""
+        if get_history_detail is None:
+            self.skipTest("fastapi is not installed in this test environment")
+
+        context_snapshot = {
+            "enhanced_context": {
+                "realtime": {"price": 300.0},
+            },
+            "realtime_quote_raw": "not-a-dict",
+        }
+        query_id = "query_change_pct_non_dict_raw"
+        saved = self.db.save_analysis_history(
+            result=self._build_result(),
+            query_id=query_id,
+            report_type="simple",
+            news_content="新闻摘要",
+            context_snapshot=context_snapshot,
+            save_snapshot=True,
+        )
+        self.assertEqual(saved, 1)
+
+        with self.db.get_session() as session:
+            row = session.query(AnalysisHistory).filter(AnalysisHistory.query_id == query_id).first()
+            if row is None:
+                self.fail("未找到保存的历史记录")
+            record_id = row.id
+
+        report = get_history_detail(str(record_id), db_manager=self.db)
+        self.assertEqual(report.meta.current_price, 300.0)
+        self.assertIsNone(report.meta.change_pct)
+
     def test_history_detail_accepts_dict_raw_result(self) -> None:
         """_record_to_detail_dict should handle dict raw_result without json.loads errors."""
         result = self._build_result()
