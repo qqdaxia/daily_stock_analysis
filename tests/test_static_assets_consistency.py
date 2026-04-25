@@ -202,6 +202,39 @@ def test_existing_asset_is_served_from_explicit_assets_route(tmp_path: Path) -> 
     assert css_response.headers["content-type"].startswith("text/css")
 
 
+def test_existing_asset_supports_head_and_conditional_requests(tmp_path: Path) -> None:
+    from api.app import create_app
+
+    static_dir = tmp_path / "static"
+    assets_dir = static_dir / "assets"
+    assets_dir.mkdir(parents=True)
+    js_file = assets_dir / "index-abc.js"
+    js_file.write_text("console.log('ok')", encoding="utf-8")
+    (assets_dir / "index-abc.css").write_text("body{color:#fff}", encoding="utf-8")
+    _write_index(static_dir, _vite_index("index-abc.js", "index-abc.css"))
+
+    client = TestClient(create_app(static_dir=static_dir))
+
+    get_response = client.get("/assets/index-abc.js")
+    etag = get_response.headers["etag"]
+
+    head_response = client.head("/assets/index-abc.js")
+    cached_response = client.get(
+        "/assets/index-abc.js",
+        headers={"if-none-match": etag},
+    )
+
+    assert get_response.status_code == 200
+    assert head_response.status_code == 200
+    assert head_response.content == b""
+    assert head_response.headers["etag"] == etag
+    assert head_response.headers["content-type"].startswith("text/javascript")
+
+    assert cached_response.status_code == 304
+    assert cached_response.content == b""
+    assert cached_response.headers["etag"] == etag
+
+
 @pytest.mark.parametrize(
     "request_path",
     [

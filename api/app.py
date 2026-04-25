@@ -28,6 +28,7 @@ from typing import List, Optional
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 logger = logging.getLogger(__name__)
 
@@ -267,8 +268,15 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         # static file simply does not exist on disk.
         assets_dir = static_dir / "assets"
 
-        @app.get("/assets/{asset_path:path}", include_in_schema=False)
-        async def serve_asset(asset_path: str):
+        assets_static_files = StaticFiles(directory=str(assets_dir), check_dir=False)
+        assets_root = assets_dir.resolve()
+
+        @app.api_route(
+            "/assets/{asset_path:path}",
+            methods=["GET", "HEAD"],
+            include_in_schema=False,
+        )
+        async def serve_asset(request: Request, asset_path: str):
             file_path = _resolve_asset_path(assets_dir, asset_path)
             if file_path is None:
                 return Response(
@@ -277,8 +285,8 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     media_type="text/plain",
                 )
             if file_path.is_file():
-                content_type, _ = mimetypes.guess_type(str(file_path))
-                return FileResponse(file_path, media_type=content_type)
+                relative_path = file_path.relative_to(assets_root).as_posix()
+                return await assets_static_files.get_response(relative_path, request.scope)
             return Response(
                 content="asset not found",
                 status_code=404,
