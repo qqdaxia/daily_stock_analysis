@@ -66,10 +66,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - 🧪 **稳定市场复盘相关测试的 LiteLLM stub 行为** — 避免本机安装的 LiteLLM 在测试收集顺序变化时影响市场复盘单元测试。
 - 🧪 **pytest 默认跳过前端依赖目录** — 本地存在 `apps/dsa-web/node_modules` 时不再被后端测试递归扫描，避免发布前 gate 被无关目录拖慢。
-- [修复] 桌面端打包链路新增 `scripts/check_static_assets.py` 静态资源一致性检查，并在 `build-backend(.ps1|-macos.sh)` 的源 `static/` 与 PyInstaller 产物里各跑一次；同时在后端启动时校验 `index.html` 引用的 `/assets/*.js`/`*.css` 是否真实存在，发现错配时直接在 `logs/desktop.log` 打印明确错误，避免重现 Release 包打开后白屏（Refs #1064 / #1065 / #1050）
-- [改进] 后端 `/assets/*` 由显式路由托管，资源缺失时返回与请求扩展名匹配的 `text/javascript` / `text/css` 404，而不是被默认 JSON 错误响应误导排查（Refs #1064）
-- [修复] `kimi-k2.6` 调用自动使用模型要求的 `temperature=1.0`，避免主分析、大盘复盘或 Agent 仍传默认温度导致请求被拒绝（Fixes #1102）
-- [新功能] A 股大盘复盘推送新增“热门板块 / 热门股票”附加摘要，板块按当日涨跌幅 Top N、个股按涨跌幅优先和成交额次排序；任一数据源缺失时仅跳过对应区块，不阻断原复盘输出
 
 ## [3.13.0] - 2026-04-21
 
