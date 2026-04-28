@@ -25,6 +25,7 @@ from src.services.market_review_hotspot_service import MarketReviewHotspotServic
 
 
 logger = logging.getLogger(__name__)
+_OVERRIDE_REGION_UNSET = object()
 
 
 def _get_market_review_text(language: str) -> dict[str, str]:
@@ -72,7 +73,11 @@ def _append_cn_hotspot_sections(
         return review_report
 
 
-def _resolve_run_markets(region: str) -> list[str]:
+def _resolve_run_markets(
+    region: str,
+    *,
+    restrict_to_open_markets: bool = True,
+) -> list[str]:
     all_markets = [('cn', 'cn_title', 'A 股'), ('hk', 'hk_title', '港股'), ('us', 'us_title', '美股')]
     valid_singles = {'cn', 'us', 'hk'}
 
@@ -83,6 +88,8 @@ def _resolve_run_markets(region: str) -> list[str]:
         return [market for market, _, _ in all_markets if market in requested]
 
     if region == 'both':
+        if not restrict_to_open_markets:
+            return [market for market, _, _ in all_markets]
         open_markets = get_open_markets_today()
         requested = [market for market, _, _ in all_markets if market in open_markets]
         return requested or ['cn']
@@ -99,7 +106,7 @@ def run_market_review(
     search_service: Optional[SearchService] = None,
     send_notification: bool = True,
     merge_notification: bool = False,
-    override_region: Optional[str] = None,
+    override_region: Optional[str] | object = _OVERRIDE_REGION_UNSET,
 ) -> Optional[str]:
     """
     执行大盘复盘分析
@@ -110,7 +117,9 @@ def run_market_review(
         search_service: 搜索服务（可选）
         send_notification: 是否发送通知
         merge_notification: 是否合并推送（跳过本次推送，由 main 层合并个股+大盘后统一发送，Issue #190）
-        override_region: 覆盖 config 的 market_review_region（Issue #373 交易日过滤后有效子集）
+        override_region:
+            覆盖 config 的 market_review_region（Issue #373 交易日过滤后有效子集）。
+            显式传入 None 时，沿用配置值但跳过本函数内对 both 的交易日过滤。
 
     Returns:
         复盘报告文本
@@ -119,13 +128,21 @@ def run_market_review(
     config = get_config()
     review_text = _get_market_review_text(getattr(config, "report_language", "zh"))
     review_language = getattr(config, "report_language", "zh")
-    region = (
-        override_region
-        if override_region is not None
-        else (getattr(config, 'market_review_region', 'cn') or 'cn')
-    )
+    configured_region = getattr(config, 'market_review_region', 'cn') or 'cn'
+    if override_region is _OVERRIDE_REGION_UNSET:
+        region = configured_region
+        restrict_to_open_markets = True
+    elif override_region is None:
+        region = configured_region
+        restrict_to_open_markets = False
+    else:
+        region = override_region
+        restrict_to_open_markets = True
     all_markets = [('cn', 'cn_title', 'A 股'), ('hk', 'hk_title', '港股'), ('us', 'us_title', '美股')]
-    run_markets = _resolve_run_markets(region)
+    run_markets = _resolve_run_markets(
+        region,
+        restrict_to_open_markets=restrict_to_open_markets,
+    )
 
     try:
         if len(run_markets) > 1:
