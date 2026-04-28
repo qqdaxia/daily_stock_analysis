@@ -37,7 +37,12 @@ export interface PortfolioPositionItem {
   lastPrice: number;
   marketValueBase: number;
   unrealizedPnlBase: number;
+  unrealizedPnlPct?: number | null;
   valuationCurrency: string;
+  priceSource: string;
+  priceDate?: string | null;
+  isStale: boolean;
+  isFallback: boolean;
 }
 
 export interface PortfolioAccountSnapshot {

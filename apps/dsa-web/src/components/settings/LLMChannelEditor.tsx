@@ -146,11 +146,13 @@ interface ChannelConfig {
 interface ChannelTestState {
   status: 'idle' | 'loading' | 'success' | 'error';
   text?: string;
+  hint?: string;
 }
 
 interface ChannelDiscoveryState {
   status: 'idle' | 'loading' | 'success' | 'error';
   text?: string;
+  hint?: string;
   models: string[];
 }
 
@@ -374,6 +376,11 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
                 {discoveryState?.text || '支持 `/models` 的 OpenAI Compatible 渠道可自动拉取模型。'}
               </span>
             </div>
+            {discoveryState?.hint ? (
+              <p className="text-[11px] text-secondary-text">
+                {discoveryState.hint}
+              </p>
+            ) : null}
 
             {discoveredModels.length > 0 ? (
               <div>
@@ -429,16 +436,23 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
               {testState?.status === 'loading' ? '测试中...' : '测试连接'}
             </Button>
             {testState?.text ? (
-              <span className={`text-xs ${
-                testState.status === 'success'
-                  ? 'text-success'
-                  : testState.status === 'error'
-                    ? 'text-danger'
-                    : 'text-muted-text'
-              }`}
-              >
-                {testState.text}
-              </span>
+              <div className="space-y-1">
+                <span className={`block text-xs ${
+                  testState.status === 'success'
+                    ? 'text-success'
+                    : testState.status === 'error'
+                      ? 'text-danger'
+                      : 'text-muted-text'
+                }`}
+                >
+                  {testState.text}
+                </span>
+                {testState.hint ? (
+                  <p className="text-[11px] text-secondary-text">
+                    {testState.hint}
+                  </p>
+                ) : null}
+              </div>
             ) : null}
           </div>
         </div>
@@ -607,6 +621,66 @@ function buildModelOptions(models: string[], selectedModel: string, autoLabel: s
     options.push({ value: model, label: model });
   }
   return options;
+}
+
+const LLM_STAGE_LABELS: Record<string, string> = {
+  model_discovery: '模型发现',
+  chat_completion: '聊天调用',
+  response_parse: '响应解析',
+};
+
+const LLM_ERROR_LABELS: Record<string, string> = {
+  auth: '鉴权失败',
+  timeout: '请求超时',
+  quota: '额度或限流',
+  model_not_found: '模型不存在',
+  empty_response: '空响应',
+  format_error: '格式异常',
+  network_error: '网络异常',
+  invalid_config: '配置无效',
+  unsupported_protocol: '协议暂不支持',
+};
+
+const LLM_TROUBLESHOOTING_HINTS: Record<string, string> = {
+  auth: '请检查 API Key 是否正确、是否有多余空格，以及当前渠道是否需要额外组织/项目权限。',
+  timeout: '可重试；若持续超时，请检查 Base URL、网络代理、服务商可用区或本地防火墙。',
+  quota: '请检查余额、套餐额度、RPM/TPM 限流或并发设置，必要时稍后重试。',
+  model_not_found: '请确认模型名与渠道协议匹配，并先用“获取模型”核对该渠道实际可用模型列表。',
+  empty_response: '渠道已连通但未返回正文；可尝试切换兼容模型、关闭额外响应模式后再测试。',
+  network_error: '请检查 Base URL、代理、TLS/证书、中转网关或本地网络策略，并可稍后重试。',
+  invalid_config: '先补齐协议、Base URL、API Key 和模型配置，再执行一键测试。',
+  unsupported_protocol: '当前仅对 OpenAI Compatible / DeepSeek 渠道提供自动模型发现，请改为手动维护模型列表。',
+};
+
+function getLlmStageLabel(stage?: string | null): string {
+  return LLM_STAGE_LABELS[stage || ''] || '连接测试';
+}
+
+function getLlmErrorCodeLabel(code?: string | null): string {
+  return LLM_ERROR_LABELS[code || ''] || '测试失败';
+}
+
+function getLlmTroubleshootingHint(code?: string | null, stage?: string | null): string | undefined {
+  if (code === 'format_error') {
+    return stage === 'model_discovery'
+      ? '该渠道返回的 /models 响应格式不兼容，请改为手动填写模型列表。'
+      : '返回结构与预期不一致，请确认该渠道兼容 Chat Completions 接口。';
+  }
+  return LLM_TROUBLESHOOTING_HINTS[code || ''];
+}
+
+function buildLlmFailureText(result: {
+  message: string;
+  error?: string | null;
+  stage?: string | null;
+  errorCode?: string | null;
+}): string {
+  const prefix = `${getLlmStageLabel(result.stage)} · ${getLlmErrorCodeLabel(result.errorCode)}`;
+  const summary = result.message || '测试失败';
+  if (result.error && result.error !== result.message) {
+    return `${prefix}：${summary}（原始摘要：${result.error}）`;
+  }
+  return `${prefix}：${summary}`;
 }
 
 const MANAGED_PROVIDERS = new Set(['gemini', 'vertex_ai', 'anthropic', 'openai', 'deepseek']);
@@ -1065,13 +1139,15 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
 
       const text = result.success
         ? `连接成功${result.resolvedModel ? ` · ${result.resolvedModel}` : ''}${result.latencyMs ? ` · ${result.latencyMs} ms` : ''}`
-        : (result.error || result.message || '测试失败');
+        : buildLlmFailureText(result);
+      const hint = result.success ? undefined : getLlmTroubleshootingHint(result.errorCode, result.stage);
 
       setTestStates((previous) => ({
         ...previous,
         [index]: {
           status: result.success ? 'success' : 'error',
           text,
+          hint,
         },
       }));
     } catch (error: unknown) {
@@ -1094,6 +1170,7 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
       [channel.id]: {
         status: 'loading',
         text: '正在获取模型列表...',
+        hint: undefined,
         models: previous[channel.id]?.models || [],
       },
     }));
@@ -1115,7 +1192,8 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
           status: result.success ? 'success' : 'error',
           text: result.success
             ? `已获取 ${result.models.length} 个模型${result.latencyMs ? ` · ${result.latencyMs} ms` : ''}`
-            : (result.error || result.message || '获取模型失败'),
+            : buildLlmFailureText(result),
+          hint: result.success ? undefined : getLlmTroubleshootingHint(result.errorCode, result.stage),
           models: result.success ? result.models : (previous[channel.id]?.models || []),
         },
       }));
@@ -1128,6 +1206,7 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
         [channel.id]: {
           status: 'error',
           text: parsed.message || '获取模型失败',
+          hint: undefined,
           models: previous[channel.id]?.models || [],
         },
       }));

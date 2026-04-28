@@ -10,7 +10,9 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
-from data_provider.base import canonical_stock_code
+from sqlalchemy import and_, desc, select
+
+from data_provider.base import canonical_stock_code, normalize_stock_code
 from src.config import get_config
 from src.repositories.portfolio_repo import (
     DuplicateTradeDedupHashError,
@@ -18,6 +20,7 @@ from src.repositories.portfolio_repo import (
     PortfolioBusyError as RepoPortfolioBusyError,
     PortfolioRepository,
 )
+from src.storage import StockDaily
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +71,15 @@ class PortfolioOversellError(ValueError):
 class _AvgState:
     quantity: float = 0.0
     total_cost: float = 0.0
+
+
+@dataclass
+class _ResolvedPositionPrice:
+    value: float
+    source: str
+    price_date: Optional[date]
+    is_stale: bool
+    is_fallback: bool
 
 
 class PortfolioService:
@@ -171,7 +183,7 @@ class PortfolioService:
             raise ValueError("quantity and price must be > 0")
         if fee < 0 or tax < 0:
             raise ValueError("fee and tax must be >= 0")
-        symbol_norm = canonical_stock_code(symbol)
+        symbol_norm = self._normalize_symbol(symbol)
         if not symbol_norm:
             raise ValueError("symbol is required")
         trade_uid_norm = (trade_uid or "").strip() or None
@@ -273,7 +285,7 @@ class PortfolioService:
             account = self._require_active_account_in_session(session=session, account_id=account_id)
             market_norm = self._normalize_market(market or account.market)
             currency_norm = self._normalize_currency(currency or self._default_currency_for_market(market_norm))
-            symbol_norm = canonical_stock_code(symbol)
+            symbol_norm = self._normalize_symbol(symbol)
             if not symbol_norm:
                 raise ValueError("symbol is required")
             row = self.repo.add_corporate_action_in_session(
@@ -321,7 +333,7 @@ class PortfolioService:
 
         symbol_norm: Optional[str] = None
         if symbol is not None and symbol.strip():
-            symbol_norm = canonical_stock_code(symbol)
+            symbol_norm = self._normalize_symbol(symbol)
             if not symbol_norm:
                 raise ValueError("symbol is invalid")
 
@@ -403,7 +415,7 @@ class PortfolioService:
 
         symbol_norm: Optional[str] = None
         if symbol is not None and symbol.strip():
-            symbol_norm = canonical_stock_code(symbol)
+            symbol_norm = self._normalize_symbol(symbol)
             if not symbol_norm:
                 raise ValueError("symbol is invalid")
 
@@ -628,7 +640,7 @@ class PortfolioService:
         session: Optional[Any] = None,
     ) -> None:
         key = (
-            canonical_stock_code(symbol),
+            self._normalize_symbol(symbol),
             self._normalize_market(market),
             self._normalize_currency(currency),
         )
@@ -668,7 +680,7 @@ class PortfolioService:
         events = []
         for row in corporate_actions:
             event_key = (
-                canonical_stock_code(row.symbol),
+                self._normalize_symbol(row.symbol),
                 self._normalize_market(row.market),
                 self._normalize_currency(row.currency),
             )
@@ -676,7 +688,7 @@ class PortfolioService:
                 events.append(("corp", row.effective_date, row.id, row))
         for row in trades:
             event_key = (
-                canonical_stock_code(row.symbol),
+                self._normalize_symbol(row.symbol),
                 self._normalize_market(row.market),
                 self._normalize_currency(row.currency),
             )
@@ -765,7 +777,7 @@ class PortfolioService:
 
             if event_type == "trade":
                 key = (
-                    canonical_stock_code(event.symbol),
+                    self._normalize_symbol(event.symbol),
                     self._normalize_market(event.market),
                     self._normalize_currency(event.currency),
                 )
@@ -845,7 +857,7 @@ class PortfolioService:
 
             if event_type == "corp":
                 key = (
-                    canonical_stock_code(event.symbol),
+                    self._normalize_symbol(event.symbol),
                     self._normalize_market(event.market),
                     self._normalize_currency(event.currency),
                 )
@@ -987,11 +999,13 @@ class PortfolioService:
                     }
                 )
 
-            last_price = self.repo.get_latest_close(symbol=symbol, as_of=as_of_date)
-            if last_price is None or last_price <= 0:
-                last_price = avg_cost
+            price_meta = self._resolve_position_price(
+                symbol=symbol,
+                avg_cost=avg_cost,
+                as_of_date=as_of_date,
+            )
 
-            local_market_value = qty * float(last_price)
+            local_market_value = qty * float(price_meta.value)
             market_base, stale_market, _ = self._convert_amount(
                 amount=local_market_value,
                 from_currency=currency,
@@ -1005,6 +1019,9 @@ class PortfolioService:
                 as_of_date=as_of_date,
             )
             unrealized_base = market_base - cost_base
+            unrealized_pct = None
+            if abs(cost_base) > EPS:
+                unrealized_pct = unrealized_base / cost_base * 100.0
             fx_stale = fx_stale or stale_market or stale_cost
 
             position_rows.append(
@@ -1015,10 +1032,15 @@ class PortfolioService:
                     "quantity": round(qty, 8),
                     "avg_cost": round(avg_cost, 8),
                     "total_cost": round(total_cost, 8),
-                    "last_price": round(float(last_price), 8),
+                    "last_price": round(float(price_meta.value), 8),
                     "market_value_base": round(market_base, 8),
                     "unrealized_pnl_base": round(unrealized_base, 8),
+                    "unrealized_pnl_pct": round(unrealized_pct, 8) if unrealized_pct is not None else None,
                     "valuation_currency": account.base_currency,
+                    "price_source": price_meta.source,
+                    "price_date": price_meta.price_date.isoformat() if price_meta.price_date else None,
+                    "is_stale": bool(price_meta.is_stale),
+                    "is_fallback": bool(price_meta.is_fallback),
                 }
             )
 
@@ -1026,6 +1048,49 @@ class PortfolioService:
             total_cost_base += cost_base
 
         return position_rows, lot_rows, market_value_base, total_cost_base, fx_stale
+
+    def _resolve_position_price(
+        self,
+        *,
+        symbol: str,
+        avg_cost: float,
+        as_of_date: date,
+    ) -> _ResolvedPositionPrice:
+        normalized_symbol = self._normalize_symbol(symbol)
+        with self.repo.db.get_session() as session:
+            row = session.execute(
+                select(StockDaily)
+                .where(
+                    and_(
+                        StockDaily.code == normalized_symbol,
+                        StockDaily.date <= as_of_date,
+                    )
+                )
+                .order_by(desc(StockDaily.date))
+                .limit(1)
+            ).scalar_one_or_none()
+
+        if row is not None and row.close is not None and float(row.close) > 0:
+            price_date = row.date if isinstance(row.date, date) else None
+            return _ResolvedPositionPrice(
+                value=float(row.close),
+                source="recent_close",
+                price_date=price_date,
+                is_stale=price_date is None or price_date < as_of_date,
+                is_fallback=False,
+            )
+
+        return _ResolvedPositionPrice(
+            value=max(0.0, float(avg_cost)),
+            source="avg_cost_fallback",
+            price_date=None,
+            is_stale=True,
+            is_fallback=True,
+        )
+
+    @staticmethod
+    def _normalize_symbol(symbol: str) -> str:
+        return canonical_stock_code(normalize_stock_code(symbol))
 
     @staticmethod
     def _consume_fifo_lots(

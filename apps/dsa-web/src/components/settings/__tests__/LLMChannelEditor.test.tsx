@@ -361,11 +361,34 @@ describe('LLMChannelEditor', () => {
     );
   });
 
+  it('shows structured troubleshooting hint when channel auth fails', async () => {
+    testLLMChannel.mockResolvedValue({ success: false, message: 'LLM authentication failed', error: '401 Unauthorized · Bearer [REDACTED]', errorCode: 'auth', stage: 'chat_completion', retryable: false, details: {}, resolvedProtocol: 'openai', resolvedModel: 'openai/gpt-4o-mini', latencyMs: null });
+
+    render(
+      <LLMChannelEditor
+        items={[{ key: 'LLM_CHANNELS', value: 'openai' }, { key: 'LLM_OPENAI_PROTOCOL', value: 'openai' }, { key: 'LLM_OPENAI_BASE_URL', value: 'https://api.openai.com/v1' }, { key: 'LLM_OPENAI_ENABLED', value: 'true' }, { key: 'LLM_OPENAI_API_KEY', value: 'secret-key' }, { key: 'LLM_OPENAI_MODELS', value: 'gpt-4o-mini' }]}
+        configVersion="v1"
+        maskToken="******"
+        onSaved={() => {}}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /OpenAI 官方/i }));
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+
+    expect(await screen.findByText(/聊天调用 · 鉴权失败：LLM authentication failed/i)).toBeInTheDocument();
+    expect(screen.getByText(/请检查 API Key 是否正确/i)).toBeInTheDocument();
+  });
+
   it('keeps manual model input available when discovery fails', async () => {
     discoverLLMChannelModels.mockResolvedValue({
       success: false,
       message: 'Model discovery is not supported for this protocol',
       error: 'LLM channel does not support /models discovery yet',
+      errorCode: 'unsupported_protocol',
+      stage: 'model_discovery',
+      retryable: false,
+      details: {},
       resolvedProtocol: 'gemini',
       models: [],
       latencyMs: null,
@@ -390,7 +413,8 @@ describe('LLMChannelEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: /Gemini 官方/i }));
     fireEvent.click(screen.getByRole('button', { name: '获取模型' }));
 
-    await screen.findByText('LLM channel does not support /models discovery yet');
+    await screen.findByText(/模型发现 · 协议暂不支持：Model discovery is not supported for this protocol/i);
+    expect(screen.getByText(/当前仅对 OpenAI Compatible \/ DeepSeek 渠道提供自动模型发现/i)).toBeInTheDocument();
 
     const manualInput = screen.getByLabelText('模型（逗号分隔）');
     fireEvent.change(manualInput, { target: { value: 'gemini-2.5-flash' } });

@@ -157,6 +157,10 @@ class TestLLMChannelResponse(BaseModel):
     success: bool
     message: str
     error: Optional[str] = None
+    error_code: Optional[str] = None
+    stage: Optional[str] = None
+    retryable: Optional[bool] = None
+    details: Dict[str, Any] = Field(default_factory=dict)
     resolved_protocol: Optional[str] = None
     resolved_model: Optional[str] = None
     latency_ms: Optional[int] = None
@@ -179,6 +183,10 @@ class DiscoverLLMChannelModelsResponse(BaseModel):
     success: bool
     message: str
     error: Optional[str] = None
+    error_code: Optional[str] = None
+    stage: Optional[str] = None
+    retryable: Optional[bool] = None
+    details: Dict[str, Any] = Field(default_factory=dict)
     resolved_protocol: Optional[str] = None
     models: List[str] = Field(default_factory=list)
     latency_ms: Optional[int] = None

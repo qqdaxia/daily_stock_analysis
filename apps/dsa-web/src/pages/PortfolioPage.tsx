@@ -80,6 +80,30 @@ function formatPct(value: number | undefined | null): string {
   return `${value.toFixed(2)}%`;
 }
 
+function formatSignedPct(value: number | undefined | null): string {
+  if (value == null || Number.isNaN(value)) return '--';
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${value.toFixed(2)}%`;
+}
+
+function formatPriceSourceLabel(source: string | undefined | null): string {
+  if (source === 'avg_cost_fallback') return 'Fallback价';
+  if (source === 'recent_close') return '收盘价';
+  return '估值价';
+}
+
+function getPositionPriceHint(position: PortfolioPositionItem): string | null {
+  if (position.isFallback) {
+    return '暂无可用收盘价，已回退为持仓成本价。';
+  }
+  if (position.isStale) {
+    return position.priceDate
+      ? `价格日期 ${position.priceDate}，并非当日最新。`
+      : '价格来源较旧，请留意时效性。';
+  }
+  return null;
+}
+
 function formatSideLabel(value: PortfolioSide): string {
   return value === 'buy' ? '买入' : '卖出';
 }
@@ -970,6 +994,7 @@ const PortfolioPage: React.FC = () => {
                     <th className="text-right py-2 pr-2">现价</th>
                     <th className="text-right py-2 pr-2">市值</th>
                     <th className="text-right py-2">未实现盈亏</th>
+                    <th className="text-right py-2">收益率</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -979,10 +1004,22 @@ const PortfolioPage: React.FC = () => {
                       <td className="py-2 pr-2 font-mono text-foreground">{row.symbol}</td>
                       <td className="py-2 pr-2 text-right">{row.quantity.toFixed(2)}</td>
                       <td className="py-2 pr-2 text-right">{row.avgCost.toFixed(4)}</td>
-                      <td className="py-2 pr-2 text-right">{row.lastPrice.toFixed(4)}</td>
+                      <td className="py-2 pr-2 text-right">
+                        <div>{row.lastPrice.toFixed(4)}</div>
+                        <div className="mt-1 text-[11px] text-secondary">
+                          {formatPriceSourceLabel(row.priceSource)}
+                          {row.priceDate ? ` · ${row.priceDate}` : ''}
+                        </div>
+                        {getPositionPriceHint(row) ? (
+                          <div className="mt-1 text-[11px] text-warning">{getPositionPriceHint(row)}</div>
+                        ) : null}
+                      </td>
                       <td className="py-2 pr-2 text-right">{formatMoney(row.marketValueBase, row.valuationCurrency)}</td>
                       <td className={`py-2 text-right ${row.unrealizedPnlBase >= 0 ? 'text-success' : 'text-danger'}`}>
                         {formatMoney(row.unrealizedPnlBase, row.valuationCurrency)}
+                      </td>
+                      <td className={`py-2 text-right ${Number(row.unrealizedPnlPct || 0) >= 0 ? 'text-success' : 'text-danger'}`}>
+                        {formatSignedPct(row.unrealizedPnlPct)}
                       </td>
                     </tr>
                   ))}

@@ -10,6 +10,8 @@ import threading
 import unittest
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Optional
 from unittest.mock import patch
 
 import pandas as pd
@@ -18,7 +20,7 @@ from sqlalchemy import select
 
 from src.config import Config
 from src.repositories.portfolio_repo import PortfolioBusyError, PortfolioRepository
-from src.services.portfolio_service import PortfolioConflictError, PortfolioOversellError, PortfolioService
+from src.services.portfolio_service import _AvgState, PortfolioConflictError, PortfolioOversellError, PortfolioService
 from src.storage import DatabaseManager, PortfolioDailySnapshot, PortfolioPosition, PortfolioPositionLot, PortfolioTrade
 
 
@@ -73,6 +75,40 @@ class PortfolioServiceTestCase(unittest.TestCase):
             ]
         )
         self.db.save_daily_data(df, code=symbol, data_source="unit-test")
+
+    def _create_account_with_position(
+        self,
+        *,
+        market: str,
+        currency: str,
+        symbol: str,
+        quantity: float = 10.0,
+        price: float = 100.0,
+        close: Optional[float] = None,
+        close_date: Optional[date] = None,
+    ) -> int:
+        account = self.service.create_account(name=f"{market}-account", broker="Demo", market=market, base_currency=currency)
+        aid = account["id"]
+        self.service.record_cash_ledger(
+            account_id=aid,
+            event_date=date(2026, 1, 1),
+            direction="in",
+            amount=100000,
+            currency=currency,
+        )
+        self.service.record_trade(
+            account_id=aid,
+            symbol=symbol,
+            trade_date=date(2026, 1, 2),
+            side="buy",
+            quantity=quantity,
+            price=price,
+            market=market,
+            currency=currency,
+        )
+        if close is not None:
+            self._save_close(self.service._normalize_symbol(symbol), close_date or date(2026, 1, 3), close)
+        return aid
 
     def test_snapshot_fifo_vs_avg_on_partial_sell(self) -> None:
         account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
@@ -139,6 +175,83 @@ class PortfolioServiceTestCase(unittest.TestCase):
         self.assertEqual(len(avg_acc["positions"]), 1)
         self.assertAlmostEqual(fifo_acc["positions"][0]["quantity"], 50.0, places=6)
         self.assertAlmostEqual(avg_acc["positions"][0]["quantity"], 50.0, places=6)
+
+    def test_snapshot_position_price_metadata_uses_backend_values_for_cn_hk_us(self) -> None:
+        for market, currency, symbol, close, expected_symbol in [
+            ("cn", "CNY", "600519", 12.5, "600519"),
+            ("hk", "HKD", "hk700", 420.0, "HK00700"),
+            ("us", "USD", "aapl", 210.0, "AAPL"),
+        ]:
+            with self.subTest(market=market):
+                aid = self._create_account_with_position(market=market, currency=currency, symbol=symbol, close=close)
+                position = self.service.get_portfolio_snapshot(account_id=aid, as_of=date(2026, 1, 3), cost_method="fifo")["accounts"][0]["positions"][0]
+
+                self.assertEqual(position["symbol"], expected_symbol)
+                self.assertEqual(position["price_source"], "recent_close")
+                self.assertEqual(position["price_date"], "2026-01-03")
+                self.assertFalse(position["is_stale"])
+                self.assertFalse(position["is_fallback"])
+                self.assertAlmostEqual(position["last_price"], close, places=6)
+                self.assertAlmostEqual(position["market_value_base"], close * 10, places=6)
+                self.assertAlmostEqual(position["unrealized_pnl_base"], close * 10 - 1000, places=6)
+                self.assertAlmostEqual(position["unrealized_pnl_pct"], (close * 10 - 1000) / 1000 * 100, places=6)
+
+    def test_snapshot_marks_stale_close_and_avg_cost_fallback_price(self) -> None:
+        aid = self._create_account_with_position(
+            market="cn",
+            currency="CNY",
+            symbol="600519",
+            close=110,
+            close_date=date(2026, 1, 2),
+        )
+        self.service.record_trade(
+            account_id=aid,
+            symbol="000001",
+            trade_date=date(2026, 1, 2),
+            side="buy",
+            quantity=5,
+            price=20,
+            market="cn",
+            currency="CNY",
+        )
+        self._save_close("600519", date(2026, 1, 2), 110)
+
+        snapshot = self.service.get_portfolio_snapshot(account_id=aid, as_of=date(2026, 1, 3), cost_method="fifo")
+        positions = {item["symbol"]: item for item in snapshot["accounts"][0]["positions"]}
+
+        stale_close = positions["600519"]
+        self.assertEqual(stale_close["price_source"], "recent_close")
+        self.assertEqual(stale_close["price_date"], "2026-01-02")
+        self.assertTrue(stale_close["is_stale"])
+        self.assertFalse(stale_close["is_fallback"])
+        self.assertAlmostEqual(stale_close["last_price"], 110.0, places=6)
+        self.assertAlmostEqual(stale_close["unrealized_pnl_pct"], 10.0, places=6)
+
+        fallback = positions["000001"]
+        self.assertEqual(fallback["price_source"], "avg_cost_fallback")
+        self.assertIsNone(fallback["price_date"])
+        self.assertTrue(fallback["is_stale"])
+        self.assertTrue(fallback["is_fallback"])
+        self.assertAlmostEqual(fallback["last_price"], 20.0, places=6)
+        self.assertAlmostEqual(fallback["market_value_base"], 100.0, places=6)
+        self.assertAlmostEqual(fallback["unrealized_pnl_base"], 0.0, places=6)
+        self.assertAlmostEqual(fallback["unrealized_pnl_pct"], 0.0, places=6)
+
+    def test_build_positions_handles_zero_cost_without_division(self) -> None:
+        account = SimpleNamespace(base_currency="CNY")
+
+        positions, _, _, _, _ = self.service._build_positions(
+            account=account,
+            as_of_date=date(2026, 1, 3),
+            cost_method="avg",
+            fifo_lots={},
+            avg_state={("AAPL", "us", "USD"): _AvgState(quantity=10.0, total_cost=0.0)},
+        )
+
+        self.assertEqual(len(positions), 1)
+        self.assertEqual(positions[0]["price_source"], "avg_cost_fallback")
+        self.assertIsNone(positions[0]["unrealized_pnl_pct"])
+        self.assertAlmostEqual(positions[0]["last_price"], 0.0, places=6)
 
     def test_corporate_actions_dividend_and_split(self) -> None:
         account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")

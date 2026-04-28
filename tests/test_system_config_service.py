@@ -723,6 +723,48 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertEqual(payload["resolved_model"], "openai/gpt-4o-mini")
         self.assertEqual(mock_completion.call_args.kwargs["temperature"], 0.42)
 
+    @patch("litellm.completion")
+    def test_test_llm_channel_classifies_common_failure_scenarios(self, mock_completion) -> None:
+        cases = [
+            (PermissionError("401 Unauthorized Bearer sk-secret-value"), "auth", "chat_completion", False),
+            (TimeoutError("request timed out"), "timeout", "chat_completion", True),
+            (Exception("404 model not found: gpt-4o-mini"), "model_not_found", "chat_completion", False),
+            (
+                type("MockResponse", (), {"choices": [type("Choice", (), {"message": type("Message", (), {"content": ""})()})()]})(),
+                "empty_response",
+                "response_parse",
+                False,
+            ),
+            (object(), "format_error", "response_parse", False),
+        ]
+
+        for response_or_exc, error_code, stage, retryable in cases:
+            with self.subTest(error_code=error_code):
+                mock_completion.reset_mock()
+                if isinstance(response_or_exc, Exception):
+                    mock_completion.side_effect = response_or_exc
+                    mock_completion.return_value = None
+                else:
+                    mock_completion.side_effect = None
+                    mock_completion.return_value = response_or_exc
+
+                payload = self.service.test_llm_channel(
+                    name="primary",
+                    protocol="openai",
+                    base_url="https://api.example.com/v1",
+                    api_key="sk-secret-value",
+                    models=["gpt-4o-mini"],
+                )
+
+                self.assertFalse(payload["success"])
+                self.assertEqual(payload["error_code"], error_code)
+                self.assertEqual(payload["stage"], stage)
+                self.assertEqual(payload["retryable"], retryable)
+                if error_code == "auth":
+                    self.assertNotIn("sk-secret-value", payload["error"])
+                if error_code == "format_error":
+                    self.assertIn("choices", payload["error"])
+
     @patch("src.services.system_config_service.requests.get")
     def test_discover_llm_channel_models_returns_deduped_ids(self, mock_get) -> None:
         mock_response = Mock()
@@ -757,6 +799,33 @@ class SystemConfigServiceTestCase(unittest.TestCase):
             "Bearer sk-test-value",
         )
         self.assertFalse(mock_get.call_args.kwargs["allow_redirects"])
+
+    @patch("src.services.system_config_service.requests.get")
+    def test_discover_llm_channel_models_classifies_error_scenarios(self, mock_get) -> None:
+        auth_response = Mock(ok=False, status_code=401, text="invalid api key sk-secret-value")
+        auth_response.json.return_value = {"error": {"message": "invalid api key sk-secret-value"}}
+        invalid_json_response = Mock(ok=True, status_code=200, text="<html>bad gateway</html>")
+        invalid_json_response.json.side_effect = ValueError("invalid json")
+
+        for response, error_code, stage, retryable in [
+            (auth_response, "auth", "model_discovery", False),
+            (invalid_json_response, "format_error", "response_parse", False),
+        ]:
+            with self.subTest(error_code=error_code):
+                mock_get.return_value = response
+                payload = self.service.discover_llm_channel_models(
+                    name="dashscope",
+                    protocol="openai",
+                    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    api_key="sk-secret-value",
+                )
+
+                self.assertFalse(payload["success"])
+                self.assertEqual(payload["error_code"], error_code)
+                self.assertEqual(payload["stage"], stage)
+                self.assertEqual(payload["retryable"], retryable)
+                if error_code == "auth":
+                    self.assertNotIn("sk-secret-value", payload["error"])
 
     @patch("src.services.system_config_service.requests.get")
     def test_discover_llm_channel_models_rejects_redirect_responses(self, mock_get) -> None:
