@@ -310,6 +310,7 @@ daily_stock_analysis/
 > - TickFlow 实际返回的 `change_pct` / `amplitude` 为比例值；系统已在接入层统一转换为百分比值，确保与现有数据源字段语义一致。
 > - A 股大盘复盘报告采用盘后工作台式结构：固定包含盘面温度、指数明细、板块 Top 表、新闻催化、明日交易计划和风险提示；若部分数据源缺失，则保留可用区块并在对应位置降级展示。
 > - 在上述固定结构之后，系统会仅对 A 股复盘追加“热门板块 / 热门股票”摘要：热门板块按当日涨跌幅 Top N 排序，热门股票按当日涨跌幅优先、成交额次排序（剔除 ETF）；若板块或个股任一数据源缺失，则仅跳过对应追加区块，不影响原有复盘正文和其他区块输出。
+> - 上述追加摘要仅影响复盘文案拼装与 A 股行情数据读取：**未新增或修改任何 LLM 模型/provider/Base URL 配置，也未触及运行时配置的保存、清理、迁移或回填逻辑**；已有 `.env` / Web 设置 / GitHub Actions Secrets 与 Variables 的行为保持不变。
 > - 字段契约：
 >   - `fundamental_context.belong_boards` = 个股关联板块列表（当前仅 A 股写入；无数据时为 `[]`）；
 >   - `fundamental_context.boards.data` = `sector_rankings`（板块涨跌榜，结构 `{top, bottom}`）；
