@@ -31,6 +31,10 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
             )
         )
 
+    def test_contains_trend_hint_keeps_contrast_clause_target_hint(self) -> None:
+        self.assertTrue(_contains_trend_hint("不是空头而是多头排列，趋势修复。", _BULLISH_TREND_HINTS))
+        self.assertFalse(_contains_trend_hint("未转为上升趋势，反弹仍待确认。", _BULLISH_TREND_HINTS))
+
     def test_contains_trend_hint_ignores_single_character_prefixes_in_common_words(self) -> None:
         self.assertTrue(_contains_trend_hint("非常明显的多头排列，趋势仍在延续。", _BULLISH_TREND_HINTS))
         self.assertTrue(_contains_trend_hint("未来上升趋势若放量将进一步确认。", _BULLISH_TREND_HINTS))
@@ -53,6 +57,12 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
         self.assertEqual(
             _infer_trend_direction({"trend_status": "未形成上升趋势", "ma_alignment": "当前非多头排列"}),
             "neutral",
+        )
+
+    def test_infer_trend_direction_keeps_contrast_clause_final_direction(self) -> None:
+        self.assertEqual(
+            _infer_trend_direction({"trend_status": "不是空头而是多头排列", "ma_alignment": ""}),
+            "bullish",
         )
 
     def test_analysis_prompt_resolves_shared_skill_prompt_state_by_default(self) -> None:
