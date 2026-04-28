@@ -26,6 +26,9 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
         self.assertFalse(_contains_trend_hint("尚未形成上升趋势，继续观察。", _BULLISH_TREND_HINTS))
         self.assertFalse(_contains_trend_hint("未形成上升趋势，继续观察。", _BULLISH_TREND_HINTS))
         self.assertFalse(_contains_trend_hint("并未形成上升趋势，继续观察。", _BULLISH_TREND_HINTS))
+        self.assertFalse(_contains_trend_hint("没有形成多头排列，继续观察。", _BULLISH_TREND_HINTS))
+        self.assertFalse(_contains_trend_hint("当前无多头排列，仍需观察。", _BULLISH_TREND_HINTS))
+        self.assertFalse(_contains_trend_hint("尚不属于上升趋势，反弹仍待确认。", _BULLISH_TREND_HINTS))
         self.assertFalse(_contains_trend_hint("当前非多头排列，仍需观察。", _BULLISH_TREND_HINTS))
         self.assertFalse(_contains_trend_hint("This is not a bullish trend yet.", _BULLISH_TREND_HINTS))
 
@@ -62,6 +65,10 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
     def test_infer_trend_direction_ignores_negated_bullish_hints(self) -> None:
         self.assertEqual(
             _infer_trend_direction({"trend_status": "未形成上升趋势", "ma_alignment": "当前非多头排列"}),
+            "neutral",
+        )
+        self.assertEqual(
+            _infer_trend_direction({"trend_status": "没有形成多头排列", "ma_alignment": "当前无上升趋势"}),
             "neutral",
         )
 
@@ -265,7 +272,7 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
                 "volume_trend": "量价配合",
                 "buy_signal": "偏强",
                 "signal_score": 73,
-                "signal_reasons": ["多头排列，持续上涨"],
+                "signal_reasons": ["多头排列，持续上涨", "空头排列，持续下跌"],
                 "risk_factors": ["空头排列，持续下跌", "财报披露前波动可能放大"],
             },
         }
@@ -274,7 +281,9 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
 
         self.assertIn("多头排列 MA5>MA10>MA20", prompt)
         self.assertIn("财报披露前波动可能放大", prompt)
+        self.assertNotIn("空头排列，持续下跌\n", prompt)
         self.assertNotIn("空头排列，持续下跌", prompt)
+        self.assertIn("已剔除与多头主判断直接冲突的空头结构理由", prompt)
         self.assertIn("已剔除与多头主判断直接冲突的空头结构风险表述", prompt)
 
     def test_format_prompt_removes_bullish_reasons_when_final_trend_is_weak_bearish(self) -> None:

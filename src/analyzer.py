@@ -177,7 +177,20 @@ _BEARISH_TREND_HINTS: Tuple[str, ...] = (
     "downtrend",
 )
 _WEAK_BEARISH_TREND_HINTS: Tuple[str, ...] = ("弱势空头",)
-_NEGATION_TOKENS: Tuple[str, ...] = ("不是", "并非", "并未", "尚未", "未", "不属", "非", "not ", "no ")
+_NEGATION_TOKENS: Tuple[str, ...] = (
+    "不是",
+    "并非",
+    "并未",
+    "没有",
+    "尚不",
+    "尚未",
+    "未",
+    "无",
+    "不属",
+    "非",
+    "not ",
+    "no ",
+)
 _NEGATION_BREAK_CHARS: Tuple[str, ...] = (",", ".", ";", ":", "!", "?", "，", "。", "；", "：", "！", "？", "\n")
 _NEGATION_LOOKBACK_CHARS = 16
 _NEGATION_MAX_GAP_CHARS = 8
@@ -242,7 +255,7 @@ def _contains_trend_hint(text: str, hints: Tuple[str, ...]) -> bool:
     def _is_valid_negation_gap(token: str, gap: str) -> bool:
         if not gap:
             return True
-        if token not in {"未", "非"}:
+        if token not in {"未", "无", "非"}:
             return True
         return any(gap.startswith(prefix) for prefix in _SINGLE_CHAR_NEGATION_GAP_PREFIXES)
 
@@ -341,6 +354,13 @@ def _sanitize_trend_analysis_for_prompt(
             "若新闻、业绩或政策催化偏多，只能表述为“事件先行、技术待确认”或“基本面偏多，但技术面尚未确认”，严禁写成确定性买点。"
         )
     elif trend_direction == "bullish":
+        filtered_signal_reasons = _filter_conflicting_trend_items(
+            signal_reasons,
+            _BEARISH_TREND_HINTS + _WEAK_BEARISH_TREND_HINTS,
+        )
+        if len(filtered_signal_reasons) != len(signal_reasons):
+            prompt_notes.append("当前技术结构偏多，已剔除与多头主判断直接冲突的空头结构理由。")
+        signal_reasons = filtered_signal_reasons
         filtered_risk_factors = _filter_conflicting_trend_items(
             risk_factors,
             _BEARISH_TREND_HINTS + _WEAK_BEARISH_TREND_HINTS,
