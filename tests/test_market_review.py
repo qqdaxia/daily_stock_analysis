@@ -177,6 +177,75 @@ class MarketReviewLocalizationTestCase(unittest.TestCase):
         self.assertNotIn("美股", result)
         self.assertNotIn("US Market", result)
 
+    def test_run_market_review_both_uses_open_markets_subset(self) -> None:
+        notifier = self._make_notifier()
+        cn_analyzer = MagicMock()
+        cn_analyzer.run_daily_review.return_value = "CN body"
+        us_analyzer = MagicMock()
+        us_analyzer.run_daily_review.return_value = "US body"
+        hotspot_service = MagicMock()
+        hotspot_service.build_markdown.return_value = ""
+
+        with patch.object(
+            market_review_module,
+            "get_config",
+            return_value=SimpleNamespace(report_language="zh", market_review_region="both"),
+        ), patch.object(
+            market_review_module,
+            "get_open_markets_today",
+            return_value={"cn", "us"},
+        ), patch.object(
+            market_review_module,
+            "MarketAnalyzer",
+            side_effect=[cn_analyzer, us_analyzer],
+        ), patch.object(
+            market_review_module,
+            "MarketReviewHotspotService",
+            return_value=hotspot_service,
+        ):
+            result = run_market_review(notifier, send_notification=False)
+
+        self.assertIn("# A股大盘复盘\n\nCN body", result)
+        self.assertIn("# 美股大盘复盘\n\nUS body", result)
+        self.assertNotIn("港股", result)
+        self.assertNotIn("HK body", result)
+
+    def test_run_market_review_invalid_comma_region_falls_back_to_cn(self) -> None:
+        notifier = self._make_notifier()
+        market_analyzer = MagicMock()
+        market_analyzer.run_daily_review.return_value = "CN body"
+        hotspot_service = MagicMock()
+        hotspot_service.build_markdown.return_value = ""
+
+        with patch.object(
+            market_review_module,
+            "get_config",
+            return_value=SimpleNamespace(report_language="zh", market_review_region="us"),
+        ), patch.object(
+            market_review_module,
+            "MarketAnalyzer",
+            return_value=market_analyzer,
+        ) as market_analyzer_cls, patch.object(
+            market_review_module,
+            "MarketReviewHotspotService",
+            return_value=hotspot_service,
+        ), patch.object(
+            market_review_module,
+            "get_open_markets_today",
+            return_value={"cn", "us", "hk"},
+        ):
+            result = run_market_review(
+                notifier,
+                send_notification=False,
+                override_region="foo,bar",
+            )
+
+        self.assertEqual(result, "CN body")
+        self.assertEqual(
+            market_analyzer_cls.call_args.kwargs["region"],
+            "cn",
+        )
+
     def test_run_market_review_appends_hotspot_sections(self) -> None:
         notifier = self._make_notifier()
         market_analyzer = MagicMock()

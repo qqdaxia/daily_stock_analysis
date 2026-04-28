@@ -20,6 +20,7 @@ from src.market_analyzer import MarketAnalyzer
 from src.report_language import normalize_report_language
 from src.search_service import SearchService
 from src.analyzer import GeminiAnalyzer
+from src.core.trading_calendar import get_open_markets_today
 from src.services.market_review_hotspot_service import MarketReviewHotspotService
 
 
@@ -71,6 +72,27 @@ def _append_cn_hotspot_sections(
         return review_report
 
 
+def _resolve_run_markets(region: str) -> list[str]:
+    all_markets = [('cn', 'cn_title', 'A 股'), ('hk', 'hk_title', '港股'), ('us', 'us_title', '美股')]
+    valid_singles = {'cn', 'us', 'hk'}
+
+    if ',' in region:
+        requested = {m.strip() for m in region.split(',') if m.strip() in valid_singles}
+        if not requested:
+            return ['cn']
+        return [market for market, _, _ in all_markets if market in requested]
+
+    if region == 'both':
+        open_markets = get_open_markets_today()
+        requested = [market for market, _, _ in all_markets if market in open_markets]
+        return requested or ['cn']
+
+    if region in valid_singles:
+        return [region]
+
+    return ['cn']
+
+
 def run_market_review(
     notifier: NotificationService,
     analyzer: Optional[GeminiAnalyzer] = None,
@@ -103,16 +125,7 @@ def run_market_review(
         else (getattr(config, 'market_review_region', 'cn') or 'cn')
     )
     all_markets = [('cn', 'cn_title', 'A 股'), ('hk', 'hk_title', '港股'), ('us', 'us_title', '美股')]
-    valid_singles = {'cn', 'us', 'hk'}
-
-    if ',' in region:
-        run_markets = [m.strip() for m in region.split(',') if m.strip() in valid_singles]
-    elif region == 'both':
-        run_markets = [market for market, _, _ in all_markets]
-    elif region in valid_singles:
-        run_markets = [region]
-    else:
-        run_markets = ['cn']
+    run_markets = _resolve_run_markets(region)
 
     try:
         if len(run_markets) > 1:
