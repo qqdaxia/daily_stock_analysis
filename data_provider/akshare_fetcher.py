@@ -1375,9 +1375,12 @@ class AkshareFetcher(BaseFetcher):
             'User-Agent': random.choice(USER_AGENTS),
         }
 
+        # Note: rate limiting is handled by the caller (`_get_hk_realtime_quote`)
+        # before any HK source is queried — calling `_enforce_rate_limit` again
+        # here would add a redundant 2–5s jitter sleep per request.
+
         api_start = time.time()
         try:
-            self._enforce_rate_limit()
             response = requests.get(url, headers=headers, timeout=10)
             response.encoding = 'gbk'
         except Exception as exc:
