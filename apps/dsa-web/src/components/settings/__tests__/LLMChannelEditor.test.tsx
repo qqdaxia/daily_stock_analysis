@@ -167,7 +167,7 @@ describe('LLMChannelEditor', () => {
       expect.arrayContaining([
         expect.objectContaining({ key: 'LITELLM_MODEL', value: '' }),
         expect.objectContaining({ key: 'AGENT_LITELLM_MODEL', value: '' }),
-        expect.objectContaining({ key: 'LITELLM_FALLBACK_MODELS', value: 'deepseek/deepseek-v4-pro,cohere/command-r-plus' }),
+        expect.objectContaining({ key: 'LITELLM_FALLBACK_MODELS', value: 'cohere/command-r-plus' }),
         expect.objectContaining({ key: 'VISION_MODEL', value: '' }),
         expect.objectContaining({ key: 'LLM_DEEPSEEK_MODELS', value: 'deepseek-v4-flash,deepseek-v4-pro' }),
       ]),

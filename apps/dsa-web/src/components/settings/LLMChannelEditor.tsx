@@ -866,6 +866,20 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
     return models;
   }, [channels, managesRuntimeConfig]);
 
+  useEffect(() => {
+    if (!managesRuntimeConfig || availableModels.length === 0) {
+      return;
+    }
+
+    setRuntimeConfig((previous) => {
+      const sanitized = sanitizeRuntimeConfigForSave(previous, availableModels);
+      if (runtimeConfigsAreEqual(sanitized, previous)) {
+        return previous;
+      }
+      return sanitized;
+    });
+  }, [availableModels, managesRuntimeConfig]);
+
   const hasChanges = useMemo(() => {
     const runtimeChanged = (
       runtimeConfig.primaryModel !== initialRuntimeConfig.primaryModel
