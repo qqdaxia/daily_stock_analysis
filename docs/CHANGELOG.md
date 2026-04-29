@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
 - [改进] 港股实时行情主源切换为腾讯单股接口（`http://qt.gtimg.cn/q=hkXXXXX`），单股响应从 35s+（拉全市场）降到亚秒级，并绕开 `push2.eastmoney.com` 港股端点对部分海外网络主动 RST 触发 `RemoteDisconnected` 的连接问题；原 `stock_hk_spot_em` / `stock_hk_spot` 保留为备用链路 1/2，腾讯独立熔断器 key `akshare_hk_tencent`。
+- [文档] 港股腾讯主源字段映射目前无公开契约文档，兼容依据为离线回归测试中的实测 `v_hk00700` payload（`tests/test_hk_tencent_realtime.py`）及 78 字段位置断言；线上验证仅支持手工复测（例如抓 `http://qt.gtimg.cn/q=hk00700`），CI 默认不覆盖该外部接口可达性，因此回滚策略为：可回退到 `stock_hk_spot_em` 主源（腾讯保留为备用）或直接 revert 本修复。
 - [测试] 新增 `tests/test_hk_tencent_realtime.py`，覆盖 HK 腾讯单股 payload 字段映射（含 volume 单位、市值亿→元、52 周高低位置与 A 股不一致）以及 HTTP 500 / 空响应 / 字段不足 / price=0 / 连接异常等失败路径。
 - [新功能] 大盘复盘支持港股市场：`MARKET_REVIEW_REGION` 新增 `hk` 选项；`both` 扩展为 A股+港股+美股，并新增港股指数（HSI/HSTECH/HSCEI）复盘链路。
 - [修复] Bot `/market` 命令复用 `get_open_markets_today()` / `compute_effective_region()` 做交易日过滤：结果作为 `override_region` 透传给 `run_market_review`；若结果为空字符串则跳过复盘并推送“今日相关市场休市”，与 CLI/调度入口行为一致。
