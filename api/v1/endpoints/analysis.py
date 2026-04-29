@@ -423,14 +423,21 @@ def get_task_list(
         TaskListResponse: 任务列表响应
     """
     task_queue = get_task_queue()
-    
-    # 获取所有任务
-    all_tasks = task_queue.list_all_tasks(limit=limit)
-    
-    # 状态筛选
+
+    # Parse status filter before fetching so that limit is applied after
+    # filtering, not before. Otherwise ?status=pending&limit=20 could return
+    # fewer than 20 results even when more pending tasks exist beyond the cap.
+    status_list = None
     if status:
         status_list = [s.strip().lower() for s in status.split(",")]
+
+    # When filtering by status, fetch up to the API maximum first so the
+    # requested limit is applied to the already-filtered set.
+    all_tasks = task_queue.list_all_tasks(limit=100 if status_list else limit)
+
+    if status_list:
         all_tasks = [t for t in all_tasks if t.status.value in status_list]
+        all_tasks = all_tasks[:limit]
     
     # 统计信息
     stats = task_queue.get_task_stats()
