@@ -87,6 +87,13 @@ class TestHKRealtimeFallback(unittest.TestCase):
         # Bypass rate limiting
         self.fetcher._enforce_rate_limit = lambda: None
         self.fetcher._set_random_user_agent = lambda: None
+        # Force the new Tencent single-stock path to return None so that these
+        # tests continue to exercise the stock_hk_spot_em / stock_hk_spot
+        # fallback chain. The Tencent path is covered by
+        # tests/test_hk_tencent_realtime.py.
+        self.fetcher._get_hk_realtime_quote_from_tencent = (
+            lambda stock_code, normalized_code: None
+        )
 
     @patch("data_provider.akshare_fetcher.get_realtime_circuit_breaker")
     def test_em_success_returns_quote_with_name(self, mock_cb):

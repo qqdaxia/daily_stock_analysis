@@ -188,6 +188,26 @@ def _to_sina_tx_symbol(stock_code: str) -> str:
     return f"sz{base}"
 
 
+def _to_hk_tx_symbol(stock_code: str) -> str:
+    """Convert HK code to hk-prefixed symbol for Tencent/Sina single-stock API.
+
+    Accepts the same input shapes that ``_get_hk_realtime_quote`` already
+    normalizes: ``00700``, ``0700``, ``HK00700``, ``0700.HK``.
+
+    Examples:
+        >>> _to_hk_tx_symbol('00700')
+        'hk00700'
+        >>> _to_hk_tx_symbol('0700.HK')
+        'hk00700'
+    """
+    code = stock_code.strip().lower()
+    if code.endswith('.hk'):
+        code = code[:-3]
+    if code.startswith('hk'):
+        code = code[2:]
+    return f"hk{code.zfill(5)}"
+
+
 def _classify_realtime_http_error(exc: Exception) -> Tuple[str, str]:
     """
     Classify Sina/Tencent realtime quote failures into stable categories.
@@ -1324,12 +1344,132 @@ class AkshareFetcher(BaseFetcher):
             circuit_breaker.record_failure(source_key, str(e))
             return None
     
+    def _get_hk_realtime_quote_from_tencent(
+        self, stock_code: str, normalized_code: str
+    ) -> Optional[UnifiedRealtimeQuote]:
+        """获取港股实时行情（腾讯单股接口）。
+
+        数据来源：腾讯财经 ``http://qt.gtimg.cn/q=hkXXXXX``，单股查询毫秒级返回。
+        相对 ``stock_hk_spot_em`` 的优点：
+            - 单股请求，负载小，无需拉全市场 4621+ 行 DataFrame；
+            - 路径上不依赖 ``push2.eastmoney.com`` —— 后者对部分海外网络
+              会在握手后主动 ``RST`` 连接，触发熔断。
+
+        字段映射来自实测：腾讯 HK 数据从 ``fields[44]`` 起的字段含义与 A 股
+        不一致（例如 A 股 ``fields[46]`` 是市净率，HK 接口在该位置为
+        数据源标签 ``"TENCENT"``），因此换手率/振幅/PB 等字段在 HK 接口上
+        不可靠，在此实现里不解析。
+
+        Args:
+            stock_code: 用户传入的港股代码（任意支持格式）。
+            normalized_code: 已 zfill 5 位的纯数字代码，用于排查日志。
+
+        Returns:
+            ``UnifiedRealtimeQuote`` 对象；解析失败或无数据返回 ``None``。
+        """
+        symbol = _to_hk_tx_symbol(stock_code)
+        url = f"http://{TENCENT_REALTIME_ENDPOINT}={symbol}"
+
+        headers = {
+            'Referer': 'http://finance.qq.com',
+            'User-Agent': random.choice(USER_AGENTS),
+        }
+
+        api_start = time.time()
+        try:
+            self._enforce_rate_limit()
+            response = requests.get(url, headers=headers, timeout=10)
+            response.encoding = 'gbk'
+        except Exception as exc:
+            api_elapsed = time.time() - api_start
+            logger.info(
+                f"[API错误] 腾讯港股接口请求 {stock_code} ({symbol}) 异常: "
+                f"{type(exc).__name__}: {exc}, elapsed={api_elapsed:.2f}s"
+            )
+            return None
+
+        api_elapsed = time.time() - api_start
+
+        if response.status_code != 200:
+            logger.info(
+                f"[API错误] 腾讯港股接口 {symbol} HTTP {response.status_code}, "
+                f"elapsed={api_elapsed:.2f}s"
+            )
+            return None
+
+        content = response.text.strip()
+        if '=""' in content or not content:
+            logger.info(f"[API返回] 腾讯港股接口返回空数据 ({symbol})")
+            return None
+
+        data_start = content.find('"')
+        data_end = content.rfind('"')
+        if data_start == -1 or data_end <= data_start:
+            logger.info(f"[API返回] 腾讯港股接口数据格式异常 ({symbol})")
+            return None
+
+        fields = content[data_start + 1:data_end].split('~')
+
+        # HK 接口在 fields[6] 位置已经是"股"为单位（A 股位置 6 是"手"），
+        # fields[44]/[45] 是"亿"为单位的总市值/流通市值，
+        # fields[48]/[49] 是 52 周最高/最低（A 股该位置是涨跌停价/量比）。
+        if len(fields) < 50:
+            logger.info(
+                f"[API返回] 腾讯港股接口字段数不足 (got={len(fields)}, "
+                f"need=50, symbol={symbol})"
+            )
+            return None
+
+        try:
+            circ_mv_yi = safe_float(fields[45])
+            total_mv_yi = safe_float(fields[44])
+            quote = UnifiedRealtimeQuote(
+                code=stock_code,
+                name=fields[1] if len(fields) > 1 else "",
+                source=RealtimeSource.TENCENT,
+                price=safe_float(fields[3]),
+                change_pct=safe_float(fields[32]),
+                change_amount=safe_float(fields[31]),
+                volume=safe_int(fields[6]),
+                amount=safe_float(fields[37]),
+                open_price=safe_float(fields[5]),
+                high=safe_float(fields[33]),
+                low=safe_float(fields[34]),
+                pre_close=safe_float(fields[4]),
+                pe_ratio=safe_float(fields[39]),
+                circ_mv=circ_mv_yi * 100000000 if circ_mv_yi is not None else None,
+                total_mv=total_mv_yi * 100000000 if total_mv_yi is not None else None,
+                high_52w=safe_float(fields[48]),
+                low_52w=safe_float(fields[49]),
+            )
+        except (IndexError, ValueError) as exc:
+            logger.info(
+                f"[API返回] 腾讯港股接口字段解析失败 ({symbol}): "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return None
+
+        if quote.price is None or quote.price <= 0:
+            logger.info(
+                f"[API返回] 腾讯港股接口 {symbol} 价格无效 (price={quote.price}), "
+                f"忽略此次响应"
+            )
+            return None
+
+        logger.info(
+            f"[港股实时行情-腾讯] {stock_code} {quote.name}: "
+            f"价格={quote.price}, 涨跌={quote.change_pct}%, "
+            f"elapsed={api_elapsed:.2f}s"
+        )
+        return quote
+
     def _get_hk_realtime_quote(self, stock_code: str) -> Optional[UnifiedRealtimeQuote]:
         """
         获取港股实时行情数据
 
-        主数据源：ak.stock_hk_spot_em()（东方财富）
-        备用数据源：ak.stock_hk_spot()（新浪）
+        主数据源：腾讯单股接口（``http://qt.gtimg.cn/q=hkXXXXX``，毫秒级）
+        备用数据源 1：``ak.stock_hk_spot_em()``（东方财富，全市场快照）
+        备用数据源 2：``ak.stock_hk_spot()``（新浪，全市场快照）
         包含：最新价、涨跌幅、成交量、成交额等
 
         Args:
@@ -1340,6 +1480,7 @@ class AkshareFetcher(BaseFetcher):
         """
         import akshare as ak
         circuit_breaker = get_realtime_circuit_breaker()
+        tencent_key = "akshare_hk_tencent"
         em_key = "akshare_hk_em"
         sina_key = "akshare_hk_sina"
 
@@ -1355,7 +1496,26 @@ class AkshareFetcher(BaseFetcher):
             raw_code = raw_code[2:]
         code = raw_code.zfill(5)
 
-        # --- 主数据源：东方财富 ---
+        # --- 主数据源：腾讯单股接口（毫秒级，不依赖东财港股端点） ---
+        if circuit_breaker.is_available(tencent_key):
+            try:
+                quote = self._get_hk_realtime_quote_from_tencent(stock_code, code)
+                if quote is not None:
+                    circuit_breaker.record_success(tencent_key)
+                    return quote
+                circuit_breaker.record_failure(tencent_key, "tencent_returned_none")
+            except Exception as exc:
+                logger.warning(
+                    f"[API错误] 腾讯港股接口获取 {stock_code} 异常: "
+                    f"{type(exc).__name__}: {exc}，回退至东方财富"
+                )
+                circuit_breaker.record_failure(tencent_key, str(exc))
+        else:
+            logger.info(
+                f"[熔断] 数据源 {tencent_key} 处于熔断状态，跳过腾讯单股接口"
+            )
+
+        # --- 备用数据源 1：东方财富全市场快照 ---
         if circuit_breaker.is_available(em_key):
             try:
                 logger.info(f"[API调用] ak.stock_hk_spot_em() 获取港股实时行情...")
@@ -1403,7 +1563,7 @@ class AkshareFetcher(BaseFetcher):
         else:
             logger.info(f"[熔断] 数据源 {em_key} 处于熔断状态，尝试使用备用链路")
 
-        # --- 备用数据源：新浪 ---
+        # --- 备用数据源 2：新浪全市场快照 ---
         if not circuit_breaker.is_available(sina_key):
             logger.info(f"[熔断] 数据源 {sina_key} 处于熔断状态，跳过备用链路")
             return None
