@@ -136,6 +136,22 @@ class TestHkTencentRealtimeParsing(unittest.TestCase):
             self.fetcher._get_hk_realtime_quote_from_tencent("00700", "00700")
         )
 
+    @patch("data_provider.akshare_fetcher.requests.get")
+    def test_quote_code_uses_normalized_form(self, mock_get):
+        """quote.code must be the 5-digit normalized form regardless of input shape.
+
+        Downstream supplement / cache / comparison logic should see a single
+        canonical code, not the user's original input (HK00700, 0700.HK, etc.).
+        """
+        mock_get.return_value = _mock_response(TENCENT_HK_PAYLOAD_00700)
+        for raw_input in ("00700", "HK00700", "hk00700", "0700.HK", "0700"):
+            with self.subTest(raw_input=raw_input):
+                quote = self.fetcher._get_hk_realtime_quote_from_tencent(
+                    raw_input, "00700"
+                )
+                self.assertIsNotNone(quote)
+                self.assertEqual(quote.code, "00700")
+
 
 if __name__ == "__main__":
     unittest.main()

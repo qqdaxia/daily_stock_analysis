@@ -1427,7 +1427,10 @@ class AkshareFetcher(BaseFetcher):
             circ_mv_yi = safe_float(fields[45])
             total_mv_yi = safe_float(fields[44])
             quote = UnifiedRealtimeQuote(
-                code=stock_code,
+                # Use the 5-digit normalized form so downstream supplement /
+                # cache / comparison logic sees a single canonical shape
+                # regardless of the input shape (HK00700 / 0700.HK / 0700).
+                code=normalized_code,
                 name=fields[1] if len(fields) > 1 else "",
                 source=RealtimeSource.TENCENT,
                 price=safe_float(fields[3]),
