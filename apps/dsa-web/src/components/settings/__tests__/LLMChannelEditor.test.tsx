@@ -167,11 +167,60 @@ describe('LLMChannelEditor', () => {
       expect.arrayContaining([
         expect.objectContaining({ key: 'LITELLM_MODEL', value: '' }),
         expect.objectContaining({ key: 'AGENT_LITELLM_MODEL', value: '' }),
-        expect.objectContaining({ key: 'LITELLM_FALLBACK_MODELS', value: 'cohere/command-r-plus' }),
+        expect.objectContaining({ key: 'LITELLM_FALLBACK_MODELS', value: 'deepseek/deepseek-v4-pro,cohere/command-r-plus' }),
         expect.objectContaining({ key: 'VISION_MODEL', value: '' }),
         expect.objectContaining({ key: 'LLM_DEEPSEEK_MODELS', value: 'deepseek-v4-flash,deepseek-v4-pro' }),
       ]),
     );
+  });
+
+  it('keeps runtime selections while channel models are edited temporarily', async () => {
+    render(
+      <LLMChannelEditor
+        items={[
+          { key: 'LLM_CHANNELS', value: 'deepseek' },
+          { key: 'LLM_DEEPSEEK_PROTOCOL', value: 'deepseek' },
+          { key: 'LLM_DEEPSEEK_BASE_URL', value: 'https://api.deepseek.com' },
+          { key: 'LLM_DEEPSEEK_ENABLED', value: 'true' },
+          { key: 'LLM_DEEPSEEK_API_KEY', value: 'sk-test' },
+          { key: 'LLM_DEEPSEEK_MODELS', value: 'deepseek-chat,deepseek-reasoner,deepseek-v4-pro' },
+          { key: 'LITELLM_MODEL', value: 'deepseek/deepseek-chat' },
+          { key: 'AGENT_LITELLM_MODEL', value: 'deepseek/deepseek-reasoner' },
+          { key: 'LITELLM_FALLBACK_MODELS', value: 'deepseek/deepseek-v4-pro' },
+          { key: 'VISION_MODEL', value: 'deepseek/deepseek-reasoner' },
+        ]}
+        configVersion="v1"
+        maskToken="******"
+        onSaved={() => {}}
+      />
+    );
+
+    const primaryModelSelect = screen.getByRole('combobox', { name: '主模型' });
+    const agentModelSelect = screen.getByRole('combobox', { name: 'Agent 主模型' });
+    const visionModelSelect = screen.getByRole('combobox', { name: 'Vision 模型' });
+
+    fireEvent.click(screen.getByRole('button', { name: /DeepSeek 官方/i }));
+    const modelInput = screen.getByLabelText('模型（逗号分隔）');
+    fireEvent.change(modelInput, {
+      target: { value: 'deepseek-v4-flash' },
+    });
+
+    await waitFor(() => {
+      expect(primaryModelSelect).toHaveValue('deepseek/deepseek-chat');
+      expect(agentModelSelect).toHaveValue('deepseek/deepseek-reasoner');
+      expect(visionModelSelect).toHaveValue('deepseek/deepseek-reasoner');
+    });
+
+    fireEvent.change(modelInput, {
+      target: { value: 'deepseek-chat,deepseek-reasoner,deepseek-v4-pro' },
+    });
+
+    await waitFor(() => {
+      expect(primaryModelSelect).toHaveValue('deepseek/deepseek-chat');
+      expect(agentModelSelect).toHaveValue('deepseek/deepseek-reasoner');
+      expect(visionModelSelect).toHaveValue('deepseek/deepseek-reasoner');
+      expect(screen.getByLabelText('deepseek/deepseek-v4-pro')).toBeChecked();
+    });
   });
 
   it('keeps direct-env provider runtime models while saving channel changes', async () => {
