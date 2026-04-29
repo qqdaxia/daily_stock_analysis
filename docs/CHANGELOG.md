@@ -11,14 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
-- [新功能] 大盘复盘支持港股市场：`MARKET_REVIEW_REGION` 新增 `hk` 选项；`both` 扩展为 A股+港股+美股，并新增港股指数（HSI/HSTECH/HSCEI）复盘链路。
-- [修复] Bot `/market` 命令复用 `get_open_markets_today()` / `compute_effective_region()` 做交易日过滤：结果作为 `override_region` 透传给 `run_market_review`；若结果为空字符串则跳过复盘并推送“今日相关市场休市”，与 CLI/调度入口行为一致。
-- [测试] 新增 `tests/test_bot_market_command.py`，覆盖 `MARKET_REVIEW_REGION=both` + open markets `{"cn","us"}` / `{"cn","hk"}` 的 `override_region` 透传断言，并覆盖全市场休市跳过与关闭交易日检查路径；新增 `tests/test_yfinance_hk_indices.py` 覆盖港股指数符号映射与部分/全部失败降级路径。
-- [修复] 问股 Agent 在未配置可用 LLM 时保留后端真实错误原因并维持 `done.success=false` 失败语义，避免前端把配置缺失误当成成功回答。
-- [文档] 补充 LLM 配置指南与 FAQ，明确问股 Agent 对 `LITELLM_CONFIG` / `LLM_CHANNELS` / legacy `GEMINI_*` `OPENAI_*` `ANTHROPIC_*` 的兼容优先级、回退路径与“不静默迁移旧配置”的结论。
-- [修复] Agent 模式未生成有效决策仪表盘时保留本地趋势分析的评分、趋势和操作建议，并将强买/强卖 fallback 归一到兼容的 `buy`/`sell` 决策类型，避免首页结果被 `50 / 观望 / 未知` 缺省值覆盖。
-- [修复] 持仓快照现价缺失时不再静默回退为持仓成本；当天快照优先使用历史收盘价，仅在缺失时使用实时价 fallback，缺价持仓不再污染市值与未实现盈亏汇总，并为持仓明细返回价格来源、日期、stale 与缺价状态。
-- [测试] 补齐 `task_queue` 轻量导入 stub 的股票代码规范化函数，恢复 `tests/test_task_queue_config_sync.py` 收集与运行。
 - [新功能] A 股大盘复盘推送新增“热门板块 / 热门股票”附加摘要，按板块涨跌幅 Top N 与个股涨跌幅优先、成交额次排序追加展示；任一数据源缺失时仅跳过对应区块，不阻断原复盘输出；同时恢复 `MARKET_REVIEW_REGION=both` 的多市场全集语义，交易日过滤后可收敛为含港股的运行子集；本次改动未涉及 LLM/provider/Base URL/模型默认值或旧配置迁移。
 - [测试] 补充大盘复盘区域语义回归用例：未传 `override_region` 时继续遵循配置全集语义，不因当日开市集合收窄 `MARKET_REVIEW_REGION=both`；并覆盖交易日过滤后的 `cn,hk,us` 子集解析。
 - [文档] 补充大盘复盘热门摘要的兼容性说明：结构化检测中的“外部模型/API 或运行时配置迁移风险”来自 `.env.example` / `src/config.py` / `src/core/config_registry.py` 同时变更的命中，不涉及 LLM provider、Base URL、模型默认值或旧配置迁移。

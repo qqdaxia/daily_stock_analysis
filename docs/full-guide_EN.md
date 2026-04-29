@@ -290,7 +290,7 @@ Default schedule: Every weekday at **18:00 (Beijing Time)** automatic execution.
 | `STOCK_LIST` | Watchlist codes (comma-separated) | - |
 | `MAX_WORKERS` | Concurrent threads | `3` |
 | `MARKET_REVIEW_ENABLED` | Enable market review | `true` |
-| `MARKET_REVIEW_REGION` | Market review region: cn (A-shares), hk (HK stocks), us (US stocks), both (all three markets) | `cn` |
+| `MARKET_REVIEW_REGION` | Market review region: cn (A-shares), us (US stocks), or both (full multi-market set that may narrow to an HK-inclusive subset at runtime) | `cn` |
 | `SCHEDULE_ENABLED` | Enable scheduled tasks | `false` |
 | `SCHEDULE_TIME` | Scheduled execution time | `18:00` |
 | `LOG_DIR` | Log directory | `./logs` |
@@ -304,6 +304,7 @@ Default schedule: Every weekday at **18:00 (Beijing Time)** automatic execution.
 > - After the fixed CN market review structure, the system appends optional `Hot Sectors` / `Hot Stocks` blocks for A-shares only: sectors are ranked by daily change percentage Top N, while stocks are ranked by daily change percentage first and turnover second (ETF excluded). If either sector or stock data is unavailable, only that appendix block is skipped and the original market review body remains unchanged.
 > - The appendix reuses the existing `DataFetcherManager.get_sector_rankings()` / `get_hot_stocks()` calls and the established TickFlow, efinance, and AkShare fallback order; it does not change stock-analysis, realtime-quote, LLM, or notification precedence.
 > - `MARKET_REVIEW_REGION=both` means the **full multi-market recap set**. With trading-day checks enabled, runtime narrows it to that day's open-market subset (`cn` / `hk` / `us` / `cn,hk` / `cn,us` / `hk,us` / `cn,hk,us`).
+> - The public config surface still exposes only `cn` / `us` / `both`; `hk` and comma-joined subsets are internal effective-region values produced after trading-day filtering, not standalone user-facing config options.
 > - The implementation scope is limited to `src/core/market_review.py`, `src/services/market_review_hotspot_service.py`, `data_provider/base.py`, `data_provider/akshare_fetcher.py`, and `data_provider/efinance_fetcher.py` for review assembly and A-share market data reads; this change adds no new env vars, only synchronizes the existing `MARKET_REVIEW_REGION` comments in docs/`.env.example`, and does not alter Web/Desktop settings surfaces.
 > - The structured detector's "external model/API or runtime config migration risk" was triggered only because this PR touches `.env.example`, `src/config.py`, and `src/core/config_registry.py` together. It does not change LLM providers, base URLs, model defaults, legacy config precedence, or any migration/backfill path, so that detector can be treated as a config-file false positive here.
 > - This appendix change does not modify LLM providers, base URLs, model defaults, or runtime config migration/backfill behavior; existing configs stay as-is.
