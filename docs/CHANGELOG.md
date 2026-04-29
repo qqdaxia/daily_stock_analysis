@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] 问股页面支持组合选择多个 Agent 策略。
 - [修复] LiteLLM 内部 DEBUG 日志默认压低到 WARNING，避免流式生成时 token 级日志污染 `stock_analysis_debug_*.log`；如需排查 LiteLLM 内部细节，可临时设置 `LITELLM_LOG_LEVEL=DEBUG`（Fixes #1156）。
 - [修复] AI 配置页在可用模型列表变更后自动清理无法选择的运行时模型（主模型、Agent 主模型、Vision 与备选模型），避免旧模型残留导致“存在无效的备选模型，请重新选择。”保存阻塞。
+- [修复] AI 配置页在保存前会自动清理无法在可用模型列表中选择的运行时模型（主模型、Agent 主模型、Vision 与备选模型）；若用户恢复该模型可用性后，可再次选择并成功保存。
 
 ## [3.14.1] - 2026-04-26
 - [测试] 修正大盘复盘 prompt 测试对“明日交易计划”标题的断言，并同步桌面端版本号，恢复发布 gate。
