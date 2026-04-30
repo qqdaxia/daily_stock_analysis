@@ -274,14 +274,14 @@ describe('LLMChannelEditor', () => {
     });
   });
 
-  it('keeps direct-env provider runtime models while saving channel changes', async () => {
+  it('keeps direct-env provider runtime models (cohere / google / xai) while saving channel changes', async () => {
     update.mockResolvedValue({
       success: true,
       configVersion: 'v2',
       appliedCount: 1,
       skippedMaskedCount: 0,
       reloadTriggered: true,
-      updatedKeys: ['LLM_DEEPSEEK_BASE_URL'],
+      updatedKeys: ['LLM_DEEPSEEK_BASE_URL', 'LITELLM_MODEL', 'AGENT_LITELLM_MODEL', 'LITELLM_FALLBACK_MODELS', 'VISION_MODEL'],
       warnings: [],
     });
 
@@ -295,6 +295,9 @@ describe('LLMChannelEditor', () => {
           { key: 'LLM_DEEPSEEK_API_KEY', value: 'sk-test' },
           { key: 'LLM_DEEPSEEK_MODELS', value: 'deepseek-v4-flash' },
           { key: 'LITELLM_MODEL', value: 'cohere/command-r-plus' },
+          { key: 'AGENT_LITELLM_MODEL', value: 'google/gemini-2.5-flash' },
+          { key: 'LITELLM_FALLBACK_MODELS', value: 'cohere/command-r-plus,google/gemini-2.5-flash,xai/grok-beta' },
+          { key: 'VISION_MODEL', value: 'xai/grok-vision-beta' },
         ]}
         configVersion="v1"
         maskToken="******"
@@ -316,6 +319,9 @@ describe('LLMChannelEditor', () => {
     expect(updatePayload.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ key: 'LITELLM_MODEL', value: 'cohere/command-r-plus' }),
+        expect.objectContaining({ key: 'AGENT_LITELLM_MODEL', value: 'google/gemini-2.5-flash' }),
+          expect.objectContaining({ key: 'LITELLM_FALLBACK_MODELS', value: 'cohere/command-r-plus,google/gemini-2.5-flash,xai/grok-beta' }),
+        expect.objectContaining({ key: 'VISION_MODEL', value: 'xai/grok-vision-beta' }),
       ]),
     );
   });

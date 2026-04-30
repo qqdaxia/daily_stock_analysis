@@ -75,7 +75,9 @@ LITELLM_MODEL=ollama/qwen3:8b
 
 - 保存 AI 配置前，页面会检查 `LITELLM_MODEL`、`AGENT_LITELLM_MODEL`、`VISION_MODEL` 与 `LITELLM_FALLBACK_MODELS` 是否仍在当前启用渠道的可选模型列表中；不在列表里的值会被清空并继续保存，避免保存时失败。
 - `cohere/xxx`、`google/xxx`、`xai/xxx` 等通过非托管协议或单独 provider Key 进入的直连模型会被保留（即使不在当前渠道列表中也会通过）。
+- 兼容性依据：本功能仅清理当前启用渠道可选模型中的“托管运行时”值，`cohere/google/xai` 等非托管 provider 前缀视为外部直连入口，保留原值不做迁移或清空；该策略与仓库中当前 LiteLLM 路径的模型前缀透传一致。
 - 如果你看到某个字段被清空，先到对应渠道把该模型补回（或改成新模型）再保存即可重新选择；系统会在成功保存的提示里告诉你本次已清理了哪些运行时字段。
+- 前端回归命令：`cd apps/dsa-web && npm run lint && npm run build && npm run test -- src/components/settings/__tests__/LLMChannelEditor.test.tsx`。
 
 如果不方便用网页版，在 `.env` 文件中配置也非常丝滑，它能让你同时管理多个第三方平台。规则如下：
 
