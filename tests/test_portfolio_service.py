@@ -407,6 +407,74 @@ class PortfolioServiceTestCase(unittest.TestCase):
         rows = self.service.list_trade_events(account_id=aid, symbol="SH000001", page=1, page_size=20)["items"]
         self.assertEqual({row["symbol"] for row in rows}, {"SH000001", "000001.SH"})
 
+    def test_explicit_exchange_symbols_are_preserved_in_position_snapshot_and_validation(self) -> None:
+        account = self.service.create_account(name="Explicit", broker="Demo", market="cn", base_currency="CNY")
+        aid = account["id"]
+        self.service.record_cash_ledger(
+            account_id=aid,
+            event_date=date(2026, 1, 1),
+            direction="in",
+            amount=20000,
+            currency="CNY",
+        )
+        self.service.record_trade(
+            account_id=aid,
+            symbol="SH000001",
+            trade_date=date(2026, 1, 2),
+            side="buy",
+            quantity=1,
+            price=10,
+            currency="CNY",
+            market="cn",
+        )
+        self.service.record_trade(
+            account_id=aid,
+            symbol="000001.SZ",
+            trade_date=date(2026, 1, 2),
+            side="buy",
+            quantity=1,
+            price=10,
+            currency="CNY",
+            market="cn",
+        )
+        self.service.record_trade(
+            account_id=aid,
+            symbol="BJ920748",
+            trade_date=date(2026, 1, 2),
+            side="buy",
+            quantity=1,
+            price=10,
+            currency="CNY",
+            market="cn",
+        )
+
+        sh_trades = self.service.list_trade_events(account_id=aid, symbol="SH000001", page=1, page_size=20)["items"]
+        sz_trades = self.service.list_trade_events(account_id=aid, symbol="000001.SZ", page=1, page_size=20)["items"]
+        bj_trades = self.service.list_trade_events(account_id=aid, symbol="BJ920748", page=1, page_size=20)["items"]
+        self.assertEqual(sh_trades[0]["symbol"], "SH000001")
+        self.assertEqual(sz_trades[0]["symbol"], "000001.SZ")
+        self.assertEqual(bj_trades[0]["symbol"], "BJ920748")
+
+        snapshot = self.service.get_portfolio_snapshot(
+            account_id=aid,
+            as_of=date(2026, 1, 4),
+            cost_method="fifo",
+        )
+        symbols = {item["symbol"] for item in snapshot["accounts"][0]["positions"]}
+        self.assertEqual(symbols, {"SH000001", "SZ000001", "BJ920748"})
+
+        with self.assertRaises(PortfolioOversellError):
+            self.service.record_trade(
+                account_id=aid,
+                symbol="SZ000001",
+                trade_date=date(2026, 1, 5),
+                side="sell",
+                quantity=2,
+                price=10,
+                market="cn",
+                currency="CNY",
+            )
+
     def test_corporate_actions_dividend_and_split(self) -> None:
         account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
         aid = account["id"]

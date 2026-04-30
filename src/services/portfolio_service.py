@@ -181,7 +181,7 @@ class PortfolioService:
             raise ValueError("quantity and price must be > 0")
         if fee < 0 or tax < 0:
             raise ValueError("fee and tax must be >= 0")
-        symbol_norm = self._normalize_symbol(symbol)
+        symbol_norm = self._normalize_symbol_for_storage(symbol)
         if not symbol_norm:
             raise ValueError("symbol is required")
         trade_uid_norm = (trade_uid or "").strip() or None
@@ -196,11 +196,11 @@ class PortfolioService:
                     trade_uid=trade_uid_norm,
                     dedup_hash=dedup_hash_norm,
                     session=session,
-                )
+                    )
                 if side_norm == "sell":
                     self._validate_sell_quantity(
                         account_id=account_id,
-                        symbol=symbol_norm,
+                        symbol=symbol,
                         market=market_norm,
                         currency=currency_norm,
                         trade_date=trade_date,
@@ -283,7 +283,7 @@ class PortfolioService:
             account = self._require_active_account_in_session(session=session, account_id=account_id)
             market_norm = self._normalize_market(market or account.market)
             currency_norm = self._normalize_currency(currency or self._default_currency_for_market(market_norm))
-            symbol_norm = self._normalize_symbol(symbol)
+            symbol_norm = self._normalize_symbol_for_storage(symbol)
             if not symbol_norm:
                 raise ValueError("symbol is required")
             row = self.repo.add_corporate_action_in_session(
@@ -638,7 +638,7 @@ class PortfolioService:
         session: Optional[Any] = None,
     ) -> None:
         key = (
-            self._normalize_symbol(symbol),
+            self._normalize_symbol_for_position(symbol),
             self._normalize_market(market),
             self._normalize_currency(currency),
         )
@@ -678,7 +678,7 @@ class PortfolioService:
         events = []
         for row in corporate_actions:
             event_key = (
-                self._normalize_symbol(row.symbol),
+                self._normalize_symbol_for_position(row.symbol),
                 self._normalize_market(row.market),
                 self._normalize_currency(row.currency),
             )
@@ -686,7 +686,7 @@ class PortfolioService:
                 events.append(("corp", row.effective_date, row.id, row))
         for row in trades:
             event_key = (
-                self._normalize_symbol(row.symbol),
+                self._normalize_symbol_for_position(row.symbol),
                 self._normalize_market(row.market),
                 self._normalize_currency(row.currency),
             )
@@ -775,7 +775,7 @@ class PortfolioService:
 
             if event_type == "trade":
                 key = (
-                    self._normalize_symbol(event.symbol),
+                    self._normalize_symbol_for_position(event.symbol),
                     self._normalize_market(event.market),
                     self._normalize_currency(event.currency),
                 )
@@ -855,7 +855,7 @@ class PortfolioService:
 
             if event_type == "corp":
                 key = (
-                    self._normalize_symbol(event.symbol),
+                    self._normalize_symbol_for_position(event.symbol),
                     self._normalize_market(event.market),
                     self._normalize_currency(event.currency),
                 )
@@ -1113,7 +1113,29 @@ class PortfolioService:
         return numeric_price, provider
 
     @staticmethod
+    def _normalize_symbol_for_storage(symbol: str) -> str:
+        return canonical_stock_code(symbol)
+
+    @staticmethod
+    def _normalize_symbol_for_position(symbol: str) -> str:
+        if not (symbol or "").strip():
+            return ""
+
+        raw = canonical_stock_code(symbol)
+        if len(raw) >= 8 and raw[:2] in {"SH", "SZ", "BJ"} and raw[2:].isdigit():
+            return raw
+
+        if "." in raw:
+            base, suffix = raw.rsplit(".", 1)
+            if base.isdigit() and suffix in {"SH", "SS", "SZ", "BJ"}:
+                exchange = "SH" if suffix == "SS" else suffix
+                return f"{exchange}{base}"
+
+        return canonical_stock_code(normalize_stock_code(symbol))
+
+    @staticmethod
     def _normalize_symbol(symbol: str) -> str:
+        """Backward-compatible canonicalization used by callers expecting pre-change normalized symbols."""
         return canonical_stock_code(normalize_stock_code(symbol))
 
     @classmethod
