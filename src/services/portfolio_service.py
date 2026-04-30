@@ -1135,7 +1135,25 @@ class PortfolioService:
 
     @staticmethod
     def _normalize_symbol(symbol: str) -> str:
-        """Backward-compatible canonicalization used by callers expecting pre-change normalized symbols."""
+        """
+        Canonicalization for symbol filtering with exchange-qualified input preservation.
+
+        Keep explicit A-share exchange annotations (SH/SZ/BJ) intact to avoid collapsing
+        different exchange variants of the same 6-digit core code.
+        """
+        raw = canonical_stock_code(symbol)
+        if not raw:
+            return ""
+
+        if len(raw) >= 8 and raw[:2] in {"SH", "SZ", "BJ"} and raw[2:].isdigit():
+            return raw
+
+        if "." in raw:
+            base, suffix = raw.rsplit(".", 1)
+            if base.isdigit() and suffix in {"SH", "SS", "SZ", "BJ"}:
+                exchange = "SH" if suffix == "SS" else suffix
+                return f"{exchange}{base}"
+
         return canonical_stock_code(normalize_stock_code(symbol))
 
     @classmethod
@@ -1170,10 +1188,16 @@ class PortfolioService:
         explicit_exchange: Optional[str] = None
         if len(original) >= 8 and original[:2] in {"SH", "SZ", "BJ"} and original[2:].isdigit():
             explicit_exchange = original[:2]
+            explicit_code = original[2:]
         elif "." in original:
             base, suffix = original.rsplit(".", 1)
             if base.isdigit() and suffix in {"SH", "SS", "SZ", "BJ"}:
                 explicit_exchange = "SH" if suffix == "SS" else suffix
+                explicit_code = base
+            else:
+                explicit_code = None
+        else:
+            explicit_code = None
 
         if normalized.isdigit():
             if len(normalized) == 6:
@@ -1185,6 +1209,14 @@ class PortfolioService:
                     _add(f"{normalized}.{'SS' if exchange == 'SH' else exchange}")
                     if exchange == "SH":
                         _add(f"{normalized}.SH")
+            return values
+
+        if explicit_exchange is not None and explicit_code is not None and explicit_code.isdigit():
+            if len(explicit_code) == 6:
+                _add(f"{explicit_exchange}{explicit_code}")
+                _add(f"{explicit_code}.{'SS' if explicit_exchange == 'SH' else explicit_exchange}")
+                if explicit_exchange == "SH":
+                    _add(f"{explicit_code}.SH")
             elif len(normalized) == 5:
                 _add(f"HK{normalized}")
                 _add(f"{normalized}.HK")

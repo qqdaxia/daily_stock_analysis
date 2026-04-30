@@ -414,7 +414,7 @@ class PortfolioServiceTestCase(unittest.TestCase):
             account_id=aid,
             event_date=date(2026, 1, 1),
             direction="in",
-            amount=20000,
+            amount=10000,
             currency="CNY",
         )
         self.service.record_trade(
@@ -478,7 +478,6 @@ class PortfolioServiceTestCase(unittest.TestCase):
     def test_corporate_actions_dividend_and_split(self) -> None:
         account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
         aid = account["id"]
-
         self.service.record_cash_ledger(
             account_id=aid,
             event_date=date(2026, 1, 1),
@@ -527,6 +526,53 @@ class PortfolioServiceTestCase(unittest.TestCase):
         self.assertAlmostEqual(acc["total_equity"], 10300.0, places=6)
         self.assertAlmostEqual(pos["quantity"], 200.0, places=6)
         self.assertAlmostEqual(pos["avg_cost"], 5.0, places=6)
+
+    def test_normalize_symbol_preserves_cn_exchange_prefix_and_suffix(self) -> None:
+        self.assertEqual(self.service._normalize_symbol("sh600519"), "SH600519")
+        self.assertEqual(self.service._normalize_symbol("600519.SH"), "SH600519")
+        self.assertEqual(self.service._normalize_symbol("SZ000001"), "SZ000001")
+        self.assertEqual(self.service._normalize_symbol("000001.SZ"), "SZ000001")
+
+    def test_explicit_exchange_position_valuation_uses_exchange_qualified_symbol(self) -> None:
+        account = self.service.create_account(name="Explicit Valuation", broker="Demo", market="cn", base_currency="CNY")
+        aid = account["id"]
+        self.service.record_cash_ledger(
+            account_id=aid,
+            event_date=date(2026, 1, 1),
+            direction="in",
+            amount=20000,
+            currency="CNY",
+        )
+        self.service.record_trade(
+            account_id=aid,
+            symbol="SH600519",
+            trade_date=date(2026, 1, 2),
+            side="buy",
+            quantity=1,
+            price=10,
+            currency="CNY",
+            market="cn",
+        )
+        self.service.record_trade(
+            account_id=aid,
+            symbol="000001.SZ",
+            trade_date=date(2026, 1, 2),
+            side="buy",
+            quantity=2,
+            price=8,
+            currency="CNY",
+            market="cn",
+        )
+        self._save_close(self.service._normalize_symbol("SH600519"), date(2026, 1, 3), 12.0)
+        self._save_close(self.service._normalize_symbol("000001.SZ"), date(2026, 1, 3), 9.0)
+
+        snapshot = self.service.get_portfolio_snapshot(account_id=aid, as_of=date(2026, 1, 3), cost_method="fifo")
+        positions = {item["symbol"]: item for item in snapshot["accounts"][0]["positions"]}
+        self.assertEqual(set(positions), {"SH600519", "SZ000001"})
+        self.assertEqual(positions["SH600519"]["price_source"], "history_close")
+        self.assertAlmostEqual(positions["SH600519"]["last_price"], 12.0, places=6)
+        self.assertEqual(positions["SZ000001"]["price_source"], "history_close")
+        self.assertAlmostEqual(positions["SZ000001"]["last_price"], 9.0, places=6)
 
     def test_same_day_dividend_processed_before_trade(self) -> None:
         account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
