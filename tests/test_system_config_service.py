@@ -717,6 +717,39 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertEqual(payload["resolved_model"], "openai/deepseek-chat")
 
     @patch("litellm.completion")
+    def test_test_llm_channel_falls_back_to_message_content_when_content_blocks_empty(
+        self,
+        mock_completion,
+    ) -> None:
+        mock_completion.return_value = type(
+            "MockResponse",
+            (),
+            {
+                "choices": [
+                    type(
+                        "Choice",
+                        (),
+                        {
+                            "content_blocks": [],
+                            "message": type("Message", (), {"content": "OK"})(),
+                        },
+                    )(),
+                ]
+            },
+        )()
+
+        payload = self.service.test_llm_channel(
+            name="primary",
+            protocol="openai",
+            base_url="https://api.deepseek.com/v1",
+            api_key="sk-test-value",
+            models=["deepseek-chat"],
+        )
+
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["resolved_model"], "openai/deepseek-chat")
+
+    @patch("litellm.completion")
     def test_test_llm_channel_allows_ollama_prefix_without_explicit_protocol(self, mock_completion) -> None:
         mock_completion.return_value = type(
             "MockResponse",

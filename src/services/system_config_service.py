@@ -1632,6 +1632,7 @@ class SystemConfigService:
             message = getattr(choice, "message", None)
             if message is not None:
                 content_blocks = getattr(message, "content_blocks", None)
+        message = getattr(choice, "message", None)
         if content_blocks is not None:
             text_parts: List[str] = []
             for block in content_blocks:
@@ -1642,11 +1643,9 @@ class SystemConfigService:
                 elif hasattr(block, "content") and block.content:
                     text_parts.append(str(block.content))
             content = "".join(text_parts).strip()
-            if not content:
-                return "", "empty_response", "Completion returned content blocks without text"
-            return content, None, None
+            if content:
+                return content, None, None
 
-        message = getattr(choice, "message", None)
         if message is None:
             return "", "format_error", "Completion response did not include a message object"
         if not hasattr(message, "content"):
