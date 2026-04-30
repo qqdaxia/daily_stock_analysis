@@ -834,6 +834,7 @@ class SystemConfigServiceTestCase(unittest.TestCase):
             (PermissionError("401 Unauthorized Bearer sk-secret-value"), "auth", "chat_completion", False),
             (TimeoutError("request timed out"), "timeout", "chat_completion", True),
             (Exception("404 model not found: gpt-4o-mini"), "model_not_found", "chat_completion", False),
+            (Exception("The model `gpt-4o-mini` does not exist"), "model_not_found", "chat_completion", False),
             (Exception("404 Not Found: page not found"), "network_error", "chat_completion", False),
             (
                 type("MockResponse", (), {"choices": [type("Choice", (), {"message": type("Message", (), {"content": ""})()})()]})(),
