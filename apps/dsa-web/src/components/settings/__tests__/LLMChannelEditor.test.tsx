@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LLMChannelEditor } from '../LLMChannelEditor';
@@ -216,6 +217,57 @@ describe('LLMChannelEditor', () => {
     expect(await screen.findByText('保存后提示')).toBeInTheDocument();
     expect(screen.getByText(/已同步清理失效的运行时模型引用/i)).toBeInTheDocument();
     expect(screen.getByText(/桌面端导出备份或手动 \.env 还原/i)).toBeInTheDocument();
+  });
+
+  it('keeps save warnings visible after onSaved-driven refresh', async () => {
+    const warningMessage = '检测到已同步清理失效的运行时模型引用：主模型 / Agent 主模型 / Vision 模型 / 备选模型中的失效项。';
+    const initialItems = [
+      { key: 'LLM_CHANNELS', value: 'deepseek' },
+      { key: 'LLM_DEEPSEEK_PROTOCOL', value: 'deepseek' },
+      { key: 'LLM_DEEPSEEK_BASE_URL', value: 'https://api.deepseek.com' },
+      { key: 'LLM_DEEPSEEK_ENABLED', value: 'true' },
+      { key: 'LLM_DEEPSEEK_API_KEY', value: 'sk-test' },
+      { key: 'LLM_DEEPSEEK_MODELS', value: 'deepseek-chat,deepseek-reasoner' },
+      { key: 'LITELLM_MODEL', value: 'deepseek/deepseek-chat' },
+      { key: 'AGENT_LITELLM_MODEL', value: 'deepseek/deepseek-reasoner' },
+      { key: 'LITELLM_FALLBACK_MODELS', value: 'deepseek/deepseek-v4-pro,cohere/command-r-plus' },
+      { key: 'VISION_MODEL', value: 'deepseek/deepseek-reasoner' },
+    ];
+    const Component = () => {
+      const [items, setItems] = useState(initialItems);
+
+      return (
+        <LLMChannelEditor
+          items={items}
+          configVersion="v1"
+          maskToken="******"
+          onSaved={async (updatedItems) => {
+            setItems(updatedItems);
+          }}
+        />
+      );
+    };
+
+    update.mockResolvedValue({
+      success: true,
+      configVersion: 'v2',
+      appliedCount: 1,
+      skippedMaskedCount: 0,
+      reloadTriggered: true,
+      updatedKeys: ['LLM_DEEPSEEK_MODELS', 'LITELLM_MODEL'],
+      warnings: [warningMessage],
+    });
+
+    render(<Component />);
+
+    fireEvent.click(screen.getByRole('button', { name: /DeepSeek 官方/i }));
+    fireEvent.change(screen.getByLabelText('模型（逗号分隔）'), {
+      target: { value: 'deepseek-v4-flash,deepseek-v4-pro' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存 AI 配置' }));
+
+    expect(await screen.findByText('保存后提示')).toBeInTheDocument();
+    expect(screen.getByText(warningMessage)).toBeInTheDocument();
   });
 
   it('keeps direct-env provider runtime models while saving channel changes', async () => {
