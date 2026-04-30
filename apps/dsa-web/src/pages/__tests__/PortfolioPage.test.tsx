@@ -1,5 +1,5 @@
 import type React from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApiError, createParsedApiError } from '../../api/error';
 import PortfolioPage from '../PortfolioPage';
@@ -337,6 +337,16 @@ describe('PortfolioPage FX refresh', () => {
     expect(screen.getByText('收盘价 · 2026-03-18')).toBeInTheDocument();
     expect(screen.getByText('缺价')).toBeInTheDocument();
     expect(screen.getAllByText('--').length).toBeGreaterThanOrEqual(2);
+
+    const hkRow = screen.getByText('HK00700').closest('tr');
+    const aaplRow = screen.getByText('AAPL').closest('tr');
+    expect(hkRow).not.toBeNull();
+    expect(aaplRow).not.toBeNull();
+
+    const hkRowCells = within(hkRow as HTMLTableRowElement).getAllByRole('cell');
+    const aaplRowCells = within(aaplRow as HTMLTableRowElement).getAllByRole('cell');
+    expect(hkRowCells.at(-1)).toHaveClass('text-success');
+    expect(aaplRowCells.at(-1)).toHaveClass('text-secondary');
   });
 
   it('prefers disabled feedback over empty-pair feedback when refresh is disabled', async () => {
