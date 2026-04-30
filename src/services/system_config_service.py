@@ -1141,6 +1141,26 @@ class SystemConfigService:
         return "network_error", status_code >= 500, "LLM request failed before a valid response was returned"
 
     @staticmethod
+    def _has_model_not_found_signal(text: str) -> bool:
+        lowered = text.lower()
+
+        model_candidates = [
+            re.search(r"model\s+not\s+found\s*[:：]?\s*[`\"']?\s*([a-z0-9._/-]{2,})", lowered),
+            re.search(r"model\s+does\s+not\s+exist\s*[:：]?\s*[`\"']?\s*([a-z0-9._/-]{2,})", lowered),
+            re.search(r"unknown\s+model\s*[:：]?\s*[`\"']?\s*([a-z0-9._/-]{2,})", lowered),
+            re.search(r"no\s+such\s+model\s*[:：]?\s*[`\"']?\s*([a-z0-9._/-]{2,})", lowered),
+        ]
+
+        for match in model_candidates:
+            if not match:
+                continue
+            model_id = match.group(1).strip()
+            if model_id and not model_id.startswith("/") and "http" not in model_id:
+                return True
+
+        return False
+
+    @staticmethod
     def _classify_llm_exception(exc: Exception) -> Tuple[str, bool, str]:
         exc_name = type(exc).__name__.lower()
         text = str(exc).lower()
@@ -1150,7 +1170,9 @@ class SystemConfigService:
             return "quota", True, "LLM request was rejected by quota or rate limiting"
         if any(token in exc_name for token in ("auth", "permission")) or any(token in text for token in ("unauthorized", "forbidden", "invalid api key", "authentication")):
             return "auth", False, "LLM authentication failed"
-        if "notfound" in exc_name or ("model" in text and any(token in text for token in ("not found", "does not exist", "unknown model"))):
+        if ("notfound" in exc_name or "model" in text) and (
+            "not found" in text or "does not exist" in text or "unknown model" in text
+        ) and SystemConfigService._has_model_not_found_signal(text):
             return "model_not_found", False, "Configured model could not be found on this channel"
         if any(token in exc_name for token in ("connection", "network")) or any(token in text for token in ("connection", "network", "dns", "refused", "ssl")):
             return "network_error", True, "LLM request failed before a valid response was returned"
