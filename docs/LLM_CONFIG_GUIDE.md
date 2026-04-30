@@ -88,6 +88,7 @@ LITELLM_MODEL=ollama/qwen3:8b
 - 兼容窗口与静默清理范围：在 `litellm>=1.80.10,<1.82.7` 时，保存仅清理失效的 runtime 模型引用（`LITELLM_MODEL`、`AGENT_LITELLM_MODEL`、`VISION_MODEL`、`LITELLM_FALLBACK_MODELS`），`cohere/*` 等非渠道直连模型会被保留。
 - 回退方式：可直接用桌面端导出备份后通过 `POST /api/v1/system/config/import` 恢复；也可手动把 `.env` 中历史 `LITELLM_* / AGENT_LITELLM_MODEL / VISION_MODEL / LLM_TEMPERATURE` 回填后重启生效。
 - 回退回归证据：`tests/test_system_config_service.py::test_import_desktop_env_restores_runtime_models_after_cleanup` 覆盖“清理后用桌面导出备份恢复 runtime 引用”。
+- 建议回退操作链路（含设置页刷新）：先导出桌面备份，`POST /api/v1/system/config/import` 导入后，再通过 `GET /api/v1/system/config` 刷新页面配置，再确认 `LITELLM_MODEL / AGENT_LITELLM_MODEL / VISION_MODEL / LLM_TEMPERATURE` 与模型列表一致后再继续使用。
 
 ### 常用官方文档来源（用于核对预设 provider / Base URL / 模型命名）
 
@@ -167,6 +168,16 @@ LITELLM_MODEL=ollama/qwen3:8b
 - 非 Kimi 主模型、非 Kimi fallback 以及切回普通模型后的请求，仍继续使用你配置的温度；也就是说旧配置无需迁移，切换模型即可自动恢复原行为。
 - 本仓库兼容性回归覆盖见：`tests/test_llm_channel_config.py`、`tests/test_market_analyzer_generate_text.py`、`tests/test_agent_pipeline.py`、`tests/test_system_config_service.py`。
 - 最小回滚方式：直接回退本次 Kimi 固定温度相关改动，无需单独迁移已有 `LLM_TEMPERATURE` 配置。
+
+### 兼容性与回退复核清单（按 PR 审核口径）
+
+- 运行时依赖窗口：`litellm>=1.80.10,<1.82.7`（与 `requirements.txt` 一致）。
+- 回归验证入口：
+  - 渠道模型发现与连接：`tests/test_llm_channel_config.py`
+  - 运行时源清理与恢复（含桌面导出备份链路）：`tests/test_system_config_service.py`
+  - 接口校验与问题面向字段：`tests/test_system_config_api.py`
+  - 设置页交互与保存后提示：`apps/dsa-web/src/components/settings/__tests__/LLMChannelEditor.test.tsx`
+- 旧配置回退路径：`桌面端导出备份 -> /api/v1/system/config/import`，或手动恢复 `LLM_* / LITELLM_* / AGENT_LITELLM_MODEL / VISION_MODEL / LLM_TEMPERATURE`。
 
 > **致命避坑说明**：如果你启用了 `LLM_CHANNELS`，那么你直接写在外面的 `DEEPSEEK_API_KEY` 或 `OPENAI_API_KEY` 将**全部失效（系统一律无视）**！二者**选其一即可**，千万不要既写了新手模式又写了渠道模式结果产生冲突。
 > **Docker 注意**：如果你在 `docker compose environment:` 或 `docker run -e` 中显式传入 `LITELLM_MODEL`、`LLM_CHANNELS`、`LLM_DEEPSEEK_MODELS` 等变量，容器重启后这些环境变量会覆盖 Web 设置页写入的 `.env`，需要同步修改部署配置。

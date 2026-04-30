@@ -88,6 +88,7 @@ The backend exposes a read-only status endpoint at `GET /api/v1/system/config/se
 - Scope and cleanup behavior under `litellm>=1.80.10,<1.82.7`: only runtime references (`LITELLM_MODEL`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, `LITELLM_FALLBACK_MODELS`) are sanitized during save; non-channel direct providers such as `cohere/*` are preserved.
 - Rollback path: export desktop config, then restore the backup through `POST /api/v1/system/config/import`; or manually restore historical `.env` entries (`LITELLM_*`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, `LLM_TEMPERATURE`) and restart.
 - Rollback evidence: `tests/test_system_config_service.py::test_import_desktop_env_restores_runtime_models_after_cleanup` covers restore from exported desktop backup after runtime cleanup.
+- Recommended rollback sequence (including UI reload): export desktop backup, restore via `POST /api/v1/system/config/import`, then call `GET /api/v1/system/config` to refresh the settings page and verify `LITELLM_MODEL` / `AGENT_LITELLM_MODEL` / `VISION_MODEL` / `LLM_TEMPERATURE` before continuing.
 
 ### Official references for provider presets / Base URLs / model naming
 
