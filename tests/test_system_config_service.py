@@ -59,6 +59,111 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertFalse(items["GEMINI_API_KEY"]["is_masked"])
         self.assertTrue(items["GEMINI_API_KEY"]["raw_value_exists"])
 
+    def test_get_setup_status_reports_required_gaps_for_empty_config(self) -> None:
+        self._rewrite_env("")
+
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+
+        self.assertFalse(status["is_complete"])
+        self.assertFalse(status["ready_for_smoke"])
+        self.assertEqual(status["next_step_key"], "llm_primary")
+        self.assertIn("llm_primary", status["required_missing_keys"])
+        self.assertIn("stock_list", status["required_missing_keys"])
+
+    def test_get_setup_status_marks_minimal_config_complete(self) -> None:
+        self._rewrite_env(
+            "LITELLM_MODEL=gemini/gemini-3-flash-preview",
+            "GEMINI_API_KEY=secret-key-value",
+            "STOCK_LIST=600519",
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+
+        checks = {check["key"]: check for check in status["checks"]}
+        self.assertTrue(status["is_complete"])
+        self.assertTrue(status["ready_for_smoke"])
+        self.assertEqual(checks["llm_primary"]["status"], "configured")
+        self.assertEqual(checks["llm_agent"]["status"], "inherited")
+        self.assertEqual(checks["stock_list"]["status"], "configured")
+        self.assertEqual(checks["notification"]["status"], "optional")
+
+    def test_get_setup_status_accepts_direct_env_primary_without_provider_key(self) -> None:
+        self._rewrite_env(
+            "LITELLM_MODEL=minimax/MiniMax-M1",
+            "STOCK_LIST=600519",
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+
+        checks = {check["key"]: check for check in status["checks"]}
+        self.assertTrue(status["is_complete"])
+        self.assertEqual(checks["llm_primary"]["status"], "configured")
+        self.assertEqual(checks["llm_agent"]["status"], "inherited")
+
+    def test_get_setup_status_matches_notification_channel_requirements(self) -> None:
+        base_lines = [
+            "LITELLM_MODEL=gemini/gemini-3-flash-preview",
+            "GEMINI_API_KEY=secret-key-value",
+            "STOCK_LIST=600519",
+        ]
+
+        self._rewrite_env(*base_lines, "PUSHOVER_USER_KEY=user-key")
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+        pushover_partial = next(check for check in status["checks"] if check["key"] == "notification")
+        self.assertEqual(pushover_partial["status"], "optional")
+
+        self._rewrite_env(*base_lines, "PUSHOVER_USER_KEY=user-key", "PUSHOVER_API_TOKEN=app-token")
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+        pushover_complete = next(check for check in status["checks"] if check["key"] == "notification")
+        self.assertEqual(pushover_complete["status"], "configured")
+
+        self._rewrite_env(*base_lines, "SLACK_BOT_TOKEN=xoxb-test", "SLACK_CHANNEL_ID=C123")
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+        slack_complete = next(check for check in status["checks"] if check["key"] == "notification")
+        self.assertEqual(slack_complete["status"], "configured")
+
+    def test_get_setup_status_uses_runtime_env_without_reloading_singletons(self) -> None:
+        self._rewrite_env("")
+
+        with patch.dict(
+            os.environ,
+            {
+                "LITELLM_MODEL": "gemini/gemini-3-flash-preview",
+                "GEMINI_API_KEY": "runtime-secret",
+                "STOCK_LIST": "600519",
+            },
+            clear=True,
+        ), patch("src.services.system_config_service.Config.reset_instance") as mock_reset, \
+             patch("src.services.system_config_service.setup_env") as mock_setup_env:
+            status = self.service.get_setup_status()
+
+        self.assertTrue(status["is_complete"])
+        mock_reset.assert_not_called()
+        mock_setup_env.assert_not_called()
+
+    def test_get_setup_status_storage_check_does_not_create_database_parent(self) -> None:
+        missing_parent = Path(self.temp_dir.name) / "missing-data"
+        db_path = missing_parent / "stock_analysis.db"
+        self._rewrite_env(
+            "LITELLM_MODEL=gemini/gemini-3-flash-preview",
+            "GEMINI_API_KEY=secret-key-value",
+            "STOCK_LIST=600519",
+            f"DATABASE_PATH={db_path}",
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+
+        storage_check = next(check for check in status["checks"] if check["key"] == "storage")
+        self.assertEqual(storage_check["status"], "configured")
+        self.assertFalse(missing_parent.exists())
+
     def test_export_desktop_env_returns_raw_text(self) -> None:
         self.env_path.write_text(
             "# Desktop config\nSTOCK_LIST=600519,000001\n\nGEMINI_API_KEY=secret-key-value\n",
