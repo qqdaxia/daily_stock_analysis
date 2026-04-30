@@ -58,6 +58,34 @@ class _LiteLLMStreamError(RuntimeError):
         self.partial_received = partial_received
 
 
+class _AllModelsFailedError(Exception):
+    """Raised when every model in the fallback chain fails.
+
+    This includes both LLM call errors and JSON parse errors (when a
+    ``response_validator`` is provided to :meth:`GeminiAnalyzer._call_litellm`).
+
+    The ``last_response_text`` attribute holds the raw text from the last model
+    that *did* return a response (but whose JSON could not be validated), so
+    callers can still attempt a best-effort text fallback.
+
+    ``last_model`` and ``last_usage`` record the model name and token usage
+    from the last attempt so callers can persist usage even on fallback.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        last_response_text: Optional[str] = None,
+        last_model: Optional[str] = None,
+        last_usage: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(message)
+        self.last_response_text = last_response_text
+        self.last_model = last_model
+        self.last_usage = last_usage or {}
+
+
 def check_content_integrity(result: "AnalysisResult") -> Tuple[bool, List[str]]:
     """
     Check mandatory fields for report content integrity.
@@ -1353,6 +1381,7 @@ class GeminiAnalyzer:
         system_prompt: Optional[str] = None,
         stream: bool = False,
         stream_progress_callback: Optional[Callable[[int], None]] = None,
+        response_validator: Optional[Callable[[str], None]] = None,
     ) -> Tuple[str, str, Dict[str, Any]]:
         """Call LLM via litellm with fallback across configured models.
 
@@ -1364,6 +1393,11 @@ class GeminiAnalyzer:
         Args:
             prompt: User prompt text.
             generation_config: Dict with optional keys: temperature, max_output_tokens, max_tokens.
+            response_validator: Optional callable that accepts the raw response text and raises
+                an exception if the response is unacceptable (e.g. not valid JSON).  When it
+                raises, the current model is treated as failed and the next fallback model is
+                tried.  If all models fail validation, :class:`_AllModelsFailedError` is raised
+                with ``last_response_text`` set to the last raw response received.
 
         Returns:
             Tuple of (response text, model_used, usage). On success model_used is the full model
@@ -1383,6 +1417,9 @@ class GeminiAnalyzer:
         use_channel_router = self._has_channel_config(config)
 
         last_error = None
+        last_response_text: Optional[str] = None
+        last_model: Optional[str] = None
+        last_usage: Dict[str, Any] = {}
         effective_system_prompt = system_prompt or self.TEXT_SYSTEM_PROMPT
         router_model_names = set(get_configured_llm_models(config.llm_model_list))
         for model in models_to_try:
@@ -1406,6 +1443,9 @@ class GeminiAnalyzer:
                 if extra:
                     call_kwargs["extra_body"] = extra
 
+                _stream_text: Optional[str] = None
+                _stream_usage: Dict[str, Any] = {}
+
                 if stream:
                     try:
                         stream_response = self._dispatch_litellm_completion(
@@ -1415,12 +1455,11 @@ class GeminiAnalyzer:
                             use_channel_router=use_channel_router,
                             router_model_names=router_model_names,
                         )
-                        response_text, usage = self._consume_litellm_stream(
+                        _stream_text, _stream_usage = self._consume_litellm_stream(
                             stream_response,
                             model=model,
                             progress_callback=stream_progress_callback,
                         )
-                        return response_text, model, usage
                     except _LiteLLMStreamError as exc:
                         if exc.partial_received:
                             logger.warning(
@@ -1442,6 +1481,14 @@ class GeminiAnalyzer:
                             exc,
                         )
 
+                if _stream_text is not None:
+                    last_response_text = _stream_text
+                    last_model = model
+                    last_usage = _stream_usage
+                    if response_validator is not None:
+                        response_validator(_stream_text)
+                    return _stream_text, model, _stream_usage
+
                 response = self._dispatch_litellm_completion(
                     model,
                     call_kwargs,
@@ -1451,8 +1498,14 @@ class GeminiAnalyzer:
                 )
 
                 if response and response.choices and response.choices[0].message.content:
+                    content = response.choices[0].message.content
                     usage = self._normalize_usage(getattr(response, "usage", None))
-                    return (response.choices[0].message.content, model, usage)
+                    last_response_text = content
+                    last_model = model
+                    last_usage = usage
+                    if response_validator is not None:
+                        response_validator(content)
+                    return (content, model, usage)
                 raise ValueError("LLM returned empty response")
 
             except Exception as e:
@@ -1460,7 +1513,12 @@ class GeminiAnalyzer:
                 last_error = e
                 continue
 
-        raise Exception(f"All LLM models failed (tried {len(models_to_try)} model(s)). Last error: {last_error}")
+        raise _AllModelsFailedError(
+            f"All LLM models failed (tried {len(models_to_try)} model(s)). Last error: {last_error}",
+            last_response_text=last_response_text,
+            last_model=last_model,
+            last_usage=last_usage,
+        )
 
     def generate_text(
         self,
@@ -1598,13 +1656,27 @@ class GeminiAnalyzer:
 
             while True:
                 start_time = time.time()
-                response_text, model_used, llm_usage = self._call_litellm(
-                    current_prompt,
-                    generation_config,
-                    system_prompt=system_prompt,
-                    stream=True,
-                    stream_progress_callback=stream_progress_callback,
-                )
+                try:
+                    response_text, model_used, llm_usage = self._call_litellm(
+                        current_prompt,
+                        generation_config,
+                        system_prompt=system_prompt,
+                        stream=True,
+                        stream_progress_callback=stream_progress_callback,
+                        response_validator=self._validate_json_response,
+                    )
+                except _AllModelsFailedError as exc:
+                    if exc.last_response_text is not None:
+                        logger.warning(
+                            "[LLM JSON] %s(%s): all models returned invalid JSON, using text fallback",
+                            name,
+                            code,
+                        )
+                        response_text = exc.last_response_text
+                        model_used = exc.last_model
+                        llm_usage = exc.last_usage
+                    else:
+                        raise
                 elapsed = time.time() - start_time
 
                 # 记录响应信息
@@ -2317,6 +2389,34 @@ class GeminiAnalyzer:
         json_str = repair_json(json_str)
         
         return json_str
+
+    def _validate_json_response(self, text: str) -> None:
+        """Validate that *text* contains a parseable JSON object.
+
+        Used as the ``response_validator`` argument to :meth:`_call_litellm` so
+        that a JSON-less or unparseable reply from the primary model is treated
+        as a model failure and triggers fallback to the next configured model.
+
+        Raises:
+            ValueError: if no JSON object is found in *text*.
+            json.JSONDecodeError: if the extracted JSON cannot be parsed (after
+                :meth:`_fix_json_string` attempts repair).
+        """
+        cleaned = text
+        if "```json" in cleaned:
+            cleaned = cleaned.replace("```json", "").replace("```", "")
+        elif "```" in cleaned:
+            cleaned = cleaned.replace("```", "")
+
+        json_start = cleaned.find("{")
+        json_end = cleaned.rfind("}") + 1
+
+        if json_start < 0 or json_end <= json_start:
+            raise ValueError("No JSON object found in LLM response")
+
+        json_str = cleaned[json_start:json_end]
+        json_str = self._fix_json_string(json_str)
+        json.loads(json_str)
     
     def _parse_text_response(
         self, 
