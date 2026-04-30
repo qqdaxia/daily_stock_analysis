@@ -788,6 +788,8 @@ Log file locations:
 - Regular logs: `logs/stock_analysis_YYYYMMDD.log`
 - Debug logs: `logs/stock_analysis_debug_YYYYMMDD.log`
 
+Debug logs keep the app's own DEBUG messages, but LiteLLM internals default to `WARNING` to avoid token-level third-party noise during streaming generation. To inspect LiteLLM internals temporarily, set `LITELLM_LOG_LEVEL=DEBUG` in `.env`.
+
 ### SQLite Write Stability
 
 For file-based SQLite databases, the app now enables `WAL` and sets `busy_timeout` on connection startup. `save_daily_data()` also uses a batch atomic upsert on `(code, date)` to reduce lock contention during bulk writes and concurrent callbacks.
