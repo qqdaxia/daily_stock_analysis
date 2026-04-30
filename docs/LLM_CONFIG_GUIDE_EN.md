@@ -76,7 +76,15 @@ LITELLM_MODEL=ollama/qwen3:8b
 - Before saving, the page validates `LITELLM_MODEL`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, and `LITELLM_FALLBACK_MODELS` against currently discovered models from enabled channels; values not found are cleared automatically so the save operation can still succeed.
 - Direct provider models such as `cohere/xxx`, `google/xxx`, or `xai/xxx` are preserved even when they are not present in the channel model list, because they are treated as valid external provider runtime entries.
 - Compatibility basis: this is implemented by keeping non-managed provider-prefix runtime values (`cohere`, `google`, `xai`) as external entries while cleaning only values that are not available in enabled channels; the behavior is aligned with LiteLLM-compatible provider-prefix passthrough in the current runtime schema.
+- Backend consistency basis: runtime validation in `SystemConfigService._validate_llm_runtime_selection` (`src/services/system_config_service.py`) relies on `_uses_direct_env_provider` (`src/config.py`).
+  Only `gemini`, `vertex_ai`, `anthropic`, `openai`, and `deepseek` are treated as managed key-backed providers, while `cohere`, `google`, and `xai` are handled as direct provider entries and remain valid as runtime selections.
 - If you see a runtime field cleared, add the corresponding model back to the channel model list (or switch to another available model) and save again; the success message will indicate which runtime fields were auto-cleaned.
+- Regression evidence (backend): `SystemConfigService` already has coverage for direct provider and fallback-source semantics, including
+  - `tests/test_system_config_service.py::SystemConfigServiceTestCase::test_validate_accepts_minimax_model_as_direct_env_provider`
+  - `tests/test_system_config_service.py::SystemConfigServiceTestCase::test_validate_accepts_cohere_model_as_direct_env_provider`
+  - `tests/test_system_config_service.py::SystemConfigServiceTestCase::test_validate_accepts_google_model_as_direct_env_provider`
+  - `tests/test_system_config_service.py::SystemConfigServiceTestCase::test_validate_accepts_xai_model_as_direct_env_provider`
+  - `tests/test_system_config_service.py::SystemConfigServiceTestCase::test_validate_reports_allows_primary_model_when_all_channels_disabled_but_legacy_key_exists`
 - Frontend regression commands: `cd apps/dsa-web && npm run lint && npm run build && npm run test -- src/components/settings/__tests__/LLMChannelEditor.test.tsx`.
 
 If you prefer modifying files, configuring this in the `.env` file is also very smooth. It allows you to manage multiple platforms simultaneously. The rules are:
