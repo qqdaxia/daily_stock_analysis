@@ -1270,7 +1270,8 @@ class GeminiAnalyzer:
 
         # DashScope / qwen 模型：直接走 OpenAI 兼容接口，不走 litellm
         if model.startswith("qwen/") or (config.openai_base_url and "dashscope" in config.openai_base_url):
-            dashscope_key = (keys[0] if keys else None) or config.openai_api_key or ""
+            import os
+            dashscope_key = os.environ.get("LITELLM_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
             dashscope_base = config.openai_base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
             # model 可能是 qwen/qwen3.5-flash，转成 qwen3.5-flash
             dashscope_model = model.split("/")[-1] if "/" in model else model
