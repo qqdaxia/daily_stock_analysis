@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Optional, Dict, Any, List, Tuple, Callable
 
 import litellm
+import requests
 from json_repair import repair_json
 from litellm import Router
 
@@ -1266,6 +1267,34 @@ class GeminiAnalyzer:
             return self._router.completion(**effective_kwargs)
         if self._router and model == config.litellm_model and not use_channel_router:
             return self._router.completion(**effective_kwargs)
+
+        # DashScope / qwen 模型：直接走 OpenAI 兼容接口，不走 litellm
+        if model.startswith("qwen/") or (config.openai_base_url and "dashscope" in config.openai_base_url):
+            dashscope_key = (keys[0] if keys else None) or config.openai_api_key or ""
+            dashscope_base = config.openai_base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            # model 可能是 qwen/qwen3.5-flash，转成 qwen3.5-flash
+            dashscope_model = model.split("/")[-1] if "/" in model else model
+            try:
+                import openai
+                client = openai.OpenAI(api_key=dashscope_key, base_url=dashscope_base)
+                msgs = effective_kwargs.get("messages", [])
+                kt = effective_kwargs.get("temperature", 0.7)
+                mt = effective_kwargs.get("max_tokens", 8192)
+                resp = client.chat.completions.create(
+                    model=dashscope_model,
+                    messages=msgs,
+                    temperature=kt,
+                    max_tokens=mt,
+                )
+                # 包装成 litellm 格式返回
+                return type("DashScopeResponse", (), {
+                    "choices": [{"message": {"content": resp.choices[0].message.content or "", "role": "assistant"}, "finish_reason": resp.choices[0].finish_reason}],
+                    "usage": {"prompt_tokens": resp.usage.prompt_tokens, "completion_tokens": resp.usage.completion_tokens, "total_tokens": resp.usage.total_tokens},
+                    "model": dashscope_model,
+                    "_is_dashscope": True,
+                })()
+            except Exception as e:
+                logger.warning(f"[DashScope] 直接调用失败，回退到 LiteLLM: {e}")
 
         keys = get_api_keys_for_model(model, config)
         if keys:
