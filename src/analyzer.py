@@ -1287,13 +1287,19 @@ class GeminiAnalyzer:
                     temperature=kt,
                     max_tokens=mt,
                 )
-                # 包装成 litellm 格式返回
-                return type("DashScopeResponse", (), {
-                    "choices": [{"message": {"content": resp.choices[0].message.content or "", "role": "assistant"}, "finish_reason": resp.choices[0].finish_reason}],
-                    "usage": {"prompt_tokens": resp.usage.prompt_tokens, "completion_tokens": resp.usage.completion_tokens, "total_tokens": resp.usage.total_tokens},
-                    "model": dashscope_model,
-                    "_is_dashscope": True,
-                })()
+                # 包装成 litellm 格式返回（必须用类，不能用 dict，否则 .choices[0].message.content 会失败）
+                class DashScopeResp:
+                    def __init__(self, chat_resp):
+                        self.choices = [type("Choice", (), {
+                            "message": type("Msg", (), {
+                                "content": chat_resp.choices[0].message.content or "",
+                                "role": "assistant"
+                            })(),
+                            "finish_reason": chat_resp.choices[0].finish_reason
+                        })()]
+                        self.usage = {"prompt_tokens": chat_resp.usage.prompt_tokens, "completion_tokens": chat_resp.usage.completion_tokens, "total_tokens": chat_resp.usage.total_tokens}
+                        self.model = dashscope_model
+                return DashScopeResp(resp)
             except Exception as e:
                 logger.warning(f"[DashScope] 直接调用失败，回退到 LiteLLM: {e}")
 
