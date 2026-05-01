@@ -191,6 +191,9 @@ class FeishuSender:
         # 格式化内容
         formatted_content = format_feishu_markdown(content)
 
+        # 调试日志
+        logger.info(f"[飞书调试] app_id={'有' if self._feishu_app_id else '无'} app_secret={'有' if self._feishu_app_secret else '无'} chat_id={'有' if self._feishu_chat_id else '无'} webhook_url={'有' if self._feishu_url else '无'}")
+
         # 优先尝试 App Bot API
         if self._feishu_app_id and self._feishu_app_secret and self._feishu_chat_id:
             logger.info("使用飞书 App Bot API 发送消息...")
